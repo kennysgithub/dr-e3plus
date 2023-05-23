@@ -98,6 +98,7 @@ obj-$(CONFIG_SOC_IMX7D_CA7) += mach-imx7d.o pm-imx7.o ddr3_freq_imx7d.o smp_wfe.
 obj-$(CONFIG_SOC_IMX7D_CM4) += mach-imx7d-cm4.o
 obj-$(CONFIG_SOC_IMX7ULP) += mach-imx7ulp.o pm-imx7ulp.o
 
+ifneq ($(CONFIG_SOC_IMX6)$(CONFIG_SOC_IMX7),)
 obj-y += busfreq-imx.o busfreq_ddr3.o busfreq_lpddr2.o
 AFLAGS_smp_wfe.o :=-Wa,-march=armv7-a
 AFLAGS_smp_wfe_imx6.o :=-Wa,-march=armv7-a
@@ -109,6 +110,7 @@ AFLAGS_lpddr2_freq_imx6q.o :=-Wa,-march=armv7-a
 AFLAGS_lpddr2_freq_imx6sx.o :=-Wa,-march=armv7-a
 AFLAGS_lpddr2_freq_imx6sll.o :=-Wa,-march=armv7-a
 AFLAGS_ddr3_freq_imx6sx.o :=-Wa,-march=armv7-a
+endif
 
 ifeq ($(CONFIG_SUSPEND),y)
 AFLAGS_suspend-imx6.o :=-Wa,-march=armv7-a

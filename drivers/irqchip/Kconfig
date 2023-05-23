@@ -496,6 +496,7 @@ config SIFIVE_PLIC
 	   If you don't know what to do here, say Y.
 
 config IMX_INTMUX
+	bool "IMX IRQ Muxing"
 	def_bool y if ARCH_MXC
 	select IRQ_DOMAIN
 	help

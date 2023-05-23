@@ -53,6 +53,13 @@ struct clk_pllv3 {
 
 #define to_clk_pllv3(_hw) container_of(_hw, struct clk_pllv3, hw)
 
+#ifndef CONFIG_HAVE_IMX_SRC
+bool imx_src_is_m4_enabled(void)
+{
+       return false;
+}
+#endif
+
 static int clk_pllv3_wait_lock(struct clk_pllv3 *pll)
 {
 	unsigned long timeout = jiffies + msecs_to_jiffies(10);
