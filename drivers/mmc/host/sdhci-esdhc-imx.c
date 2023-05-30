@@ -901,7 +901,7 @@ static inline void esdhc_pltfm_set_clock(struct sdhci_host *host,
 	ret = readl_poll_timeout(host->ioaddr + ESDHC_PRSSTAT, temp,
 				(temp & ESDHC_CLOCK_STABLE), 2, 100);
 	if (ret == -ETIMEDOUT)
-		dev_warn(mmc_dev(host->mmc), "card clock still not stable in 100us!.\n");
+		dev_warn_once(mmc_dev(host->mmc), "card clock still not stable in 100us!.\n");
 
 	if (esdhc_is_usdhc(imx_data)) {
 		val = readl(host->ioaddr + ESDHC_VENDOR_SPEC);
