@@ -60,7 +60,7 @@
 };
 
 &fec {
-	phy-mode = "mii";
+	phy-mode = "rmii";
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_fec>;
 	phy-supply = <&reg_fec_3v3>;
@@ -74,10 +74,10 @@
 	pinctrl-0 = <&pinctrl_i2c1>;
 	status = "okay";
 
-	ds3231:ds3231@68 {
+	rtc@68 {
 		compatible = "maxim,ds3231";
 		reg = <0x68>;
-		#clock-cells = <1>;
+		status = "disabled";
 	};
 };
 
@@ -170,18 +170,6 @@
 			>;
 		};
 	};
-};
-
-&ssi1 {
-	status = "okay";
-};
-
-&tsc {
-	status = "okay";
-};
-
-&tscadc {
-	status = "okay";
 };
 
 &uart1 {
