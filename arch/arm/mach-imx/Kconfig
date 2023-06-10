@@ -454,6 +454,16 @@ config SOC_IMX25
 	select PINCTRL_IMX25
 	help
 	  This enables support for Freescale i.MX25 processor
+
+endif
+
+if SOC_IMX25
+
+config DR_E3PLUS
+	bool "Dynamic Ratings E3-Plus board"
+	help
+	  This enables options for DR's E3-Plus
+
 endif
 
 if ARCH_MULTI_V7

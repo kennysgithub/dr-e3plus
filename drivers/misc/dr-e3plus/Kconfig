@@ -1,0 +1,6 @@
+config DR_CUIO
+	depends on DR_E3PLUS
+	tristate "Dynamic Ratings' CUIO"
+	default y
+	help
+	  This is the kernel-side driver for the DR E3Plus IO modules
