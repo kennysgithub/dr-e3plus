@@ -7,6 +7,7 @@
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/iio/adc/fsl-imx25-gcq.h>
+#include <dt-bindings/leds/common.h>
 #include "imx25.dtsi"
 
 / {
@@ -29,41 +30,22 @@
 			regulator-name = "fec-3v3";
 			regulator-min-microvolt = <3300000>;
 			regulator-max-microvolt = <3300000>;
-			enable-active-high;
-			status = "disabled";
+			regulator-always-on;
+			status = "enabled";
 		};
 
-		reg_2p5v: regulator@1 {
-			compatible = "regulator-fixed";
-			reg = <1>;
-			regulator-name = "2P5V";
-			regulator-min-microvolt = <2500000>;
-			regulator-max-microvolt = <2500000>;
-			status = "disabled";
-		};
-
-		reg_3p3v: regulator@2 {
-			compatible = "regulator-fixed";
-			reg = <2>;
-			regulator-name = "3P3V";
-			regulator-min-microvolt = <3300000>;
-			regulator-max-microvolt = <3300000>;
-			status = "disabled";
-		};
-
-		reg_usb_host: regulator@3 {
+		reg_usb_host: regulator@1 {
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usb_pwr_en>;
-			compatible = "regulator-gpio";
+			reg = <1>;
+
+			compatible = "regulator-fixed";
+			regulator-name = "usb-host-power";
+			/* FIXME: enable the top port later */
+			gpio = <&gpio3 16 GPIO_ACTIVE_LOW>;
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
-			reg = <3>;
-			regulator-name = "usb-host-power-en";
-			gpios =  <&gpio4 21 GPIO_ACTIVE_HIGH>, <&gpio3 16 GPIO_ACTIVE_HIGH>;
-			states = <5000000 0x3>;
-			enable-active-high;
 		};
-
 	};
 
 };
@@ -77,23 +59,23 @@
 };
 
 &fec {
-	phy-connection-type = "mii";
+	phy-addr = <0x00221430>;
+	phy-mode = "mii";
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_fec>;
-	phy-handle = <&ethphy0>;
 	status = "okay";
-	phy-reset-gpios = <&gpio2 0 GPIO_ACTIVE_HIGH>;	/* we don't have one, so fake one */
+	local-mac-address = [00 04 9F 01 1B B9];
 
 	mdio {
-                #address-cells = <1>;
-                #size-cells = <0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-                ethphy0: ethernet-phy@0 {
-                        reg = <0>;
-			reset-gpios = <&gpio2 1 GPIO_ACTIVE_HIGH>;	/* we don't have one, so fake one */
+		ethphy: ethernet-phy@0 {
+			reg = <0>;
 			status = "okay";
-                };
-        };
+			max-speed = <100>;
+		};
+	};
 };
 
 &i2c1 {
@@ -233,6 +215,14 @@
 				MX25_PAD_CSI_D9__GPIO_4_21		0x80000000
 			>;
 		};
+
+		pinctrl_leds: ledgrp {
+			fsl,pins = <
+				MX25_PAD_KPP_COL0__GPIO_3_1		0x80000000	/* Green */
+				MX25_PAD_ECB__GPIO_3_23			0x80000000	/* Red */
+				MX25_PAD_LBA__GPIO_3_24			0x80000000	/* Yellow */
+			>;
+		};
 	};
 };
 
@@ -286,10 +276,36 @@
 		compatible = "linux,wdt-gpio";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_watchdog>;
-		gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		gpio = <&gpio1 9 GPIO_ACTIVE_HIGH>;
 		hw_algo = "toggle";
 		hw_margin_ms = <1000>;
 		always-running;
-		status = "okay";
+	};
+
+	leds: leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_leds>;
+
+		red-led {
+			function = LED_FUNCTION_PANIC;
+			color = <LED_COLOR_ID_RED>;
+			linux,default-trigger = "panic";
+			gpio = <&gpio3 23 GPIO_ACTIVE_LOW>;
+		};
+
+		green-led {
+			function = LED_FUNCTION_HEARTBEAT;
+			linux,default-trigger = "heartbeat";
+			gpio = <&gpio3 1 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_GREEN>;
+		};
+
+		yellow-led {
+			function = LED_FUNCTION_DISK_ACTIVITY;
+			linux,default-trigger = "mmc0";
+			color = <LED_COLOR_ID_YELLOW>;
+			gpio = <&gpio3 24 GPIO_ACTIVE_LOW>;
+		};
 	};
 };
