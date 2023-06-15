@@ -59,23 +59,25 @@
 };
 
 &fec {
-	phy-addr = <0x00221430>;
 	phy-mode = "mii";
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_fec>;
+	phy-handle = <&ethernet>;
 	status = "okay";
-	local-mac-address = [00 04 9F 01 1B B9];
 
 	mdio {
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		ethphy: ethernet-phy@0 {
-			reg = <0>;
-			status = "okay";
-			max-speed = <100>;
+		ethernet: ethernet-phy@2 {
+			reg = <2>;
+		};
+
+		fiber: ethernet-phy@1 {
+			reg = <1>;
 		};
 	};
+
 };
 
 &i2c1 {
@@ -132,10 +134,13 @@
 				MX25_PAD_A18__FEC_COL			0x80000000
 				MX25_PAD_A25__FEC_CRS			0x80000000
 
-				MX25_PAD_FEC_MDC__FEC_MDC		0x80000000
-				MX25_PAD_FEC_MDIO__FEC_MDIO		0x400001e0
+				MX25_PAD_FEC_MDC__FEC_MDC		0x00000040
+				MX25_PAD_FEC_MDIO__FEC_MDIO		0x00000001	/* disable PKE and HYS */
 
 				MX25_PAD_A19__FEC_RX_ERR		0x80000000
+
+				/* Needed? */
+				MX25_PAD_KPP_ROW2__GPIO_2_31		0x80000000
 			>;
 		};
 
@@ -238,11 +243,13 @@
 	dr_mode = "host";
 	status = "okay";
 	vbus-supply = <&reg_usb_host>;
+	maximum-speed = "high-speed";
 };
 
 &usbotg {
 	external-vbus-divider;
 	status = "okay";
+	maximum-speed = "high-speed";
 };
 
 
