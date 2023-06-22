@@ -30,6 +30,7 @@
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/watchdog.h>
+#include <linux/reboot.h>
 
 #define DRIVER_NAME "imx2-wdt"
 
@@ -65,6 +66,7 @@ struct imx2_wdt_device {
 	struct regmap *regmap;
 	struct watchdog_device wdog;
 	bool ext_reset;
+	struct notifier_block nb;
 };
 
 static bool nowayout = WATCHDOG_NOWAYOUT;
@@ -229,6 +231,15 @@ static int imx2_wdt_start(struct watchdog_device *wdog)
 	return imx2_wdt_ping(wdog);
 }
 
+static int imx2_wdt_reboot_handler(struct notifier_block *nb,
+	unsigned long mode, void *cmd)
+{
+	struct imx2_wdt_device *wdev =
+		container_of(nb, struct imx2_wdt_device, nb);
+
+	return imx2_wdt_restart(&wdev->wdog, mode, cmd);
+}
+
 static const struct watchdog_ops imx2_wdt_ops = {
 	.owner = THIS_MODULE,
 	.start = imx2_wdt_start,
@@ -318,6 +329,13 @@ static int __init imx2_wdt_probe(struct platform_device *pdev)
 	ret = watchdog_register_device(wdog);
 	if (ret)
 		goto disable_clk;
+
+	wdev->nb.notifier_call = imx2_wdt_reboot_handler;
+	wdev->nb.priority = 128;
+
+	ret = register_restart_handler(&wdev->nb);
+	if (ret)
+		dev_err(&pdev->dev, "didn't register reboot handler: %d\n", ret);
 
 	dev_info(&pdev->dev, "timeout %d sec (nowayout=%d)\n",
 		 wdog->timeout, nowayout);

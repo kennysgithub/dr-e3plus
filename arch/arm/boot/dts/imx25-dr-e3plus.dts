@@ -204,7 +204,6 @@
 		pinctrl_watchdog: wdoggrp {
 			fsl,pins = <
 				MX25_PAD_CSI_VSYNC__GPIO_1_9		0x80000000
-				MX25_PAD_PWM__GPIO_1_26			0x80000000
 			>;
 		};
 
@@ -226,6 +225,16 @@
 				MX25_PAD_KPP_COL0__GPIO_3_1		0x80000000	/* Green */
 				MX25_PAD_ECB__GPIO_3_23			0x80000000	/* Red */
 				MX25_PAD_LBA__GPIO_3_24			0x80000000	/* Yellow */
+				MX25_PAD_PWM__GPIO_1_26			0x80000000	/* LED7 CPU OK */
+			>;
+		};
+
+		pinctrl_spi1: spi1grp {
+			fsl,pins = <
+				MX25_PAD_CSPI1_SS1__GPIO_1_17		0x80000000
+				MX25_PAD_CSPI1_SCLK__CSPI1_SCLK		0x80000000
+				MX25_PAD_CSPI1_MOSI__CSPI1_MOSI		0x80000000
+				MX25_PAD_CSPI1_MISO__CSPI1_MISO		0x80000000
 			>;
 		};
 	};
@@ -278,8 +287,28 @@
 			fsl,adc-refn = <MX25_ADC_REFN_NGND>;
 		};
 };
+
+&spi1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_spi1>;
+	cs-gpios = <&gpio1 17 GPIO_ACTIVE_LOW>;
+
+	eeprom: AT25DF081@0 {
+		compatible = "atmel,at25";
+		reg = <0>;
+		spi-max-frequency = <5000000>;
+		spi-cpha;
+		spi-cpol;
+
+		pagesize = <64>;
+		size = <1048576>;
+		address-width = <16>;
+	};
+};
+
 / {
-	watchdog: watchdog {
+	e3-watchdog {
 		compatible = "linux,wdt-gpio";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_watchdog>;
@@ -289,7 +318,7 @@
 		always-running;
 	};
 
-	leds: leds {
+	leds {
 		compatible = "gpio-leds";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_leds>;
@@ -304,7 +333,7 @@
 		green-led {
 			function = LED_FUNCTION_HEARTBEAT;
 			linux,default-trigger = "heartbeat";
-			gpio = <&gpio3 1 GPIO_ACTIVE_HIGH>;
+			gpio = <&gpio1 26 GPIO_ACTIVE_LOW>;
 			color = <LED_COLOR_ID_GREEN>;
 		};
 
