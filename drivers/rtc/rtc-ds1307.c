@@ -1497,6 +1497,10 @@ static struct clk_init_data ds3231_clks_init[] = {
 	[DS3231_CLK_32KHZ] = {
 		.name = "ds3231_clk_32khz",
 		.ops = &ds3231_clk_32khz_ops,
+#ifdef CONFIG_DR_E3PLUS
+		/* The DR E3+ crashes if the 32KHz clock goes away for some unknown reason */
+		.flags = CLK_IS_CRITICAL,
+#endif
 	},
 };
 
@@ -1570,8 +1574,6 @@ static void ds1307_clks_register(struct ds1307 *ds1307)
 static const struct regmap_config regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
-	.max_register = 0x12,
-	.cache_type = REGCACHE_FLAT | REGCACHE_NONE,
 };
 
 static int ds1307_probe(struct i2c_client *client,
