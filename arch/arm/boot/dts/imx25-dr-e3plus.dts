@@ -62,22 +62,12 @@
 	phy-mode = "mii";
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_fec>;
-	phy-handle = <&ethernet>;
 	status = "okay";
 
-	mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		ethernet: ethernet-phy@2 {
-			reg = <2>;
-		};
-
-		fiber: ethernet-phy@1 {
-			reg = <1>;
-		};
+	fixed-link {
+		speed = <100>;
+		full-duplex;
 	};
-
 };
 
 &i2c1 {
@@ -252,13 +242,11 @@
 	dr_mode = "host";
 	status = "okay";
 	vbus-supply = <&reg_usb_host>;
-	maximum-speed = "high-speed";
 };
 
 &usbotg {
 	external-vbus-divider;
 	status = "okay";
-	maximum-speed = "high-speed";
 };
 
 

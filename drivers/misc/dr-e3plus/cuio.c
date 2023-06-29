@@ -96,6 +96,7 @@ static const char rcsid[] __attribute__ ((unused)) = "$Id$";
 #include <linux/slab.h>
 
 #include "drmcc.h"
+#include "ftdi_isa.h"
 
 #define MAXCU 16
 #define MAXCUTYPE 3
@@ -106,16 +107,15 @@ static DEFINE_SPINLOCK(cuio_state_lock);
 static int cuio_open_cnt;	/* #times opened */
 static int cuio_open_mode;	/* special open modes */
 
-static void __iomem *ioaddr[MAXCU];
-static void __iomem *ioaddr_map[MAXCU];
-int evmax = EVMAX;
-int cutype[MAXCU];
-int cuboards[MAXCUTYPE+1];
-int cuboardmap[MAXCUTYPE+1][MAXCU];
+static u8  __iomem *ioaddr[MAXCU] = {(u8 *)0x300, (u8 *)0x312, };
+static u8  __iomem *ioaddr_map[MAXCU];
+static int evmax = EVMAX;
+static int cutype[MAXCU];
+static int cuboards[MAXCUTYPE+1];
+static int cuboardmap[MAXCUTYPE+1][MAXCU];
 static int cudebug = 1;
-int cucount = 0;
-int cuwait = 0;
-int cuauto = 0;
+static int cucount = 0;
+static int cuwait = 0;
 
 static struct cu_eventlist cu_eventlist;
 static struct cu_event *cuevents;
@@ -130,11 +130,16 @@ struct clientdata {
     unsigned long jiffies;
 } cu_data;
 
-#if 1
-unsigned long READB(unsigned *addr){printk(KERN_INFO "%s(): %d %px\n", __func__, __LINE__, addr); return 0L;};
-unsigned long INB(unsigned *addr){printk(KERN_INFO "%s(): %d %px\n", __func__, __LINE__, addr); return 0L;};
-void WRITEB(unsigned val, unsigned *addr){printk(KERN_INFO "%s(): %d 0x%X -> %px\n", __func__, __LINE__, val, addr);};
-void OUTB(unsigned val, unsigned *addr){printk(KERN_INFO "%s(): %d 0x%X -> %px\n", __func__, __LINE__, val, addr);};
+#ifndef CONFIG_DR_E3PLUS
+static unsigned long READB(unsigned *addr) {printk(KERN_INFO "%s(): %d %px\n", __func__, __LINE__, addr); return 0L;};
+static unsigned long INB(unsigned *addr) {printk(KERN_INFO "%s(): %d %px\n", __func__, __LINE__, addr); return 0L;};
+static void WRITEB(unsigned val, unsigned *addr) {printk(KERN_INFO "%s(): %d 0x%X -> %px\n", __func__, __LINE__, val, addr);};
+static void OUTB(unsigned val, unsigned *addr) {printk(KERN_INFO "%s(): %d 0x%X -> %px\n", __func__, __LINE__, val, addr);};
+#else
+#define READB(addr)			ftdi_isa_read(addr, 0)
+#define INB(addr)			ftdi_isa_read(addr, 1)
+#define WRITEB(val, addr)		ftdi_isa_write(val, addr, 0)
+#define OUTB(val, addr)			ftdi_isa_write(val, addr, 1)
 #endif
 
 void
@@ -649,9 +654,9 @@ int
 cuio_probe(void __iomem *port_raw, int range, int type)
 {
 	int tt;
-	void __iomem *port;
+	u8 *port;
 
-	port = ioremap((int)port_raw, 4);
+	port = (u8 *)port_raw;
 	if (cudebug) printk(KERN_INFO "CUIO Probe: type %d raw %px -> %px\n", type, port_raw, port);
 
 	// WRITEB(0, port+2);
@@ -704,32 +709,43 @@ static struct miscdevice cuio = {
 	.fops = &cuio_fops
 };
 
-
 static int __init
 cuio_init(void)
 {
-	int i = 0;
+	int i = 10;
+	int ret = 0;
 
 	printk(KERN_INFO "DRMCC CU driver %s on %s\n", cuversion, cubuild);
 
-	cutype[i] = 0; /* just incase the memory wasn't clean */
-	if ((cutype[i] = cuio_probe(ioaddr[i], 4, cutype[i])) <= 0) {
-		printk(KERN_ERR "CU module failed (%d) with bad hardware at 0x%px\n", cutype[i], ioaddr[i]);
-		return -ENODEV;
+	/* Wait for the USB-ISA bridge to come online (and retry if non-existant hardware */
+	/* FIXME BAD HACK - change driver model to use PROBE_DEFER */
+	while ((ret = (int) READB((unsigned *) 0x300)) == 0xFF) {
+		printk(KERN_INFO "%s(): waiting for FTDI ISA driver\n", __func__);
+		msleep(1000);
+		if (!--i)
+			return -ENODEV;
 	}
 
-	cucount++;
-	printk(KERN_DEBUG "DRMCC CU card type %d{%s} found at 0x%px\n", cutype[i],cutypes[cutype[i]], ioaddr[i]);
-
-	if (cutype[i] <= MAXCUTYPE){
-		int bi = cuboards[cutype[i]]++;
-
-		if (cudebug) {
-			printk(KERN_INFO "CU type %d at %d\n", cutype[i], bi);
+	for (i = 0; (i < MAXCU) && (ioaddr[i]); i++) {
+		cutype[i] = 0; /* just incase the memory wasn't clean */
+		if ((cutype[i] = cuio_probe(ioaddr[i], 4, cutype[i])) <= 0) {
+			printk(KERN_ERR "CU module failed (%d) with bad hardware at 0x%px\n", cutype[i], ioaddr[i]);
+			continue;
 		}
-		cuboardmap[cutype[i]][bi] = i;
+
+		cucount++;
+		printk(KERN_DEBUG "DRMCC CU card type %d{%s} found at 0x%px\n", cutype[i],cutypes[cutype[i]], ioaddr[i]);
+
+		if (cutype[i] <= MAXCUTYPE){
+			int bi = cuboards[cutype[i]]++;
+
+			if (cudebug) {
+				printk(KERN_INFO "CU type %d at %d\n", cutype[i], bi);
+			}
+			cuboardmap[cutype[i]][bi] = i;
+		}
+		ioaddr_map[i] = ioaddr[i];
 	}
-	i++;
 
 	if (cuevents == NULL) {
 		cu_eventlist.nevents = 0;
@@ -740,12 +756,12 @@ cuio_init(void)
 	}
 
 	if (cucount > 0) {
-		misc_register(&cuio);
+		ret = misc_register(&cuio);
 	} else {
 		return -ENODEV;
 	}
 	
-	return 0;
+	return ret;
 }
 
 void
@@ -757,14 +773,13 @@ cuio_exit(void)
 	printk(KERN_INFO "DRMCC CU module unloaded\n");
 }
 
-module_init(cuio_init);
+late_initcall(cuio_init);
 module_exit(cuio_exit);
 
 MODULE_PARM_DESC(cudebug, "the debug level (default 0)");
 MODULE_PARM_DESC(ioaddr, "the I/O port for the device (default 0x300)");
 MODULE_PARM_DESC(evmax, "the maximum number of events to save (def 100, max 255)");
 MODULE_PARM_DESC(cuwait, "delay in usec, before reading data (def 0)");
-MODULE_PARM_DESC(cuauto, "auto-probe from first ioaddr (default 0)");
 MODULE_AUTHOR("David Keeffe");
 MODULE_DESCRIPTION("CUIO Driver");
 MODULE_LICENSE("GPL");

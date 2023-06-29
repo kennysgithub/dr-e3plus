@@ -170,6 +170,7 @@ config USB_SERIAL_EMPEG
 	  module will be called empeg.
 
 config USB_SERIAL_FTDI_SIO
+	default n if DR_E3PLUS
 	tristate "USB FTDI Single Port Serial Driver"
 	---help---
 	  Say Y here if you want to use a FTDI SIO single port USB to serial

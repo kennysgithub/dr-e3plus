@@ -4,3 +4,10 @@ config DR_CUIO
 	default y
 	help
 	  This is the kernel-side driver for the DR E3Plus IO modules
+
+config DR_FTDI_ISA
+	depends on DR_E3PLUS
+	tristate "FTDI 2232H in USB-to-ISA Mode"
+	default y
+	help
+	  This driver puts the FTDI 2232H into the ISA-bus-host mode

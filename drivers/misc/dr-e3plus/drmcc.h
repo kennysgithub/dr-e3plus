@@ -1,5 +1,6 @@
 #ifndef __DRMCC_H__
 #define __DRMCC_H__
+
 #define DRMCC_MAXMOD 3
 #define DRMCC_MODSPACE 6
 
