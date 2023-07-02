@@ -107,13 +107,13 @@ static DEFINE_SPINLOCK(cuio_state_lock);
 static int cuio_open_cnt;	/* #times opened */
 static int cuio_open_mode;	/* special open modes */
 
-static u8  __iomem *ioaddr[MAXCU] = {(u8 *)0x300, (u8 *)0x312, };
+static u8  __iomem *ioaddr[MAXCU] = {(u8 *)0x300, };
 static u8  __iomem *ioaddr_map[MAXCU];
 static int evmax = EVMAX;
 static int cutype[MAXCU];
 static int cuboards[MAXCUTYPE+1];
 static int cuboardmap[MAXCUTYPE+1][MAXCU];
-static int cudebug = 1;
+static int cudebug = 0;
 static int cucount = 0;
 static int cuwait = 0;
 
@@ -714,6 +714,7 @@ cuio_init(void)
 {
 	int i = 10;
 	int ret = 0;
+	u8 *boardp = ioaddr[0];
 
 	printk(KERN_INFO "DRMCC CU driver %s on %s\n", cuversion, cubuild);
 
@@ -726,8 +727,9 @@ cuio_init(void)
 			return -ENODEV;
 	}
 
-	for (i = 0; (i < MAXCU) && (ioaddr[i]); i++) {
-		cutype[i] = 0; /* just incase the memory wasn't clean */
+	for (i = 0; (i < MAXCU); i++) {
+		ioaddr[i] = boardp;
+		boardp += 2;
 		if ((cutype[i] = cuio_probe(ioaddr[i], 4, cutype[i])) <= 0) {
 			printk(KERN_ERR "CU module failed (%d) with bad hardware at 0x%px\n", cutype[i], ioaddr[i]);
 			continue;
@@ -747,18 +749,22 @@ cuio_init(void)
 		ioaddr_map[i] = ioaddr[i];
 	}
 
-	if (cuevents == NULL) {
-		cu_eventlist.nevents = 0;
-		cu_eventlist.maxevents = evmax;
-		cu_eventlist.firstevent = 0;
-		cuevents = (struct cu_event *)kmalloc(evmax * sizeof(struct cu_event), GFP_KERNEL);
-		printk(KERN_DEBUG "DRMCC CU allocated %d event spaces\n", evmax);
-	}
-
 	if (cucount > 0) {
 		ret = misc_register(&cuio);
 	} else {
 		return -ENODEV;
+	}
+
+	if (!ret && !cuevents) {
+		cu_eventlist.nevents = 0;
+		cu_eventlist.maxevents = evmax;
+		cu_eventlist.firstevent = 0;
+		cuevents = (struct cu_event *)kmalloc(evmax * sizeof(struct cu_event), GFP_KERNEL);
+		if (cuevents) {
+			printk(KERN_DEBUG "DRMCC CU pre-allocated %d event spaces\n", evmax);
+		} else {
+			return -ENOMEM;
+		}
 	}
 	
 	return ret;

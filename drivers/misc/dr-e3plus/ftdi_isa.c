@@ -3,7 +3,6 @@
  *
  */
 
-#define DEBUG
 #include <linux/kernel.h>
 #include <linux/usb.h>
 #include <linux/module.h>
@@ -202,10 +201,13 @@ static int ftdi_mcu_read(const volatile void __iomem *_addr)
 	}
 
 	dev_dbg(&ftdi_isa_dev->interface->dev,
-	  "%s(): addr 0x%02X ret 0x%02X bytes %d\n", __func__,
-	  addr, *(u8 *) cmdbuf, bytes_xfered);
+	  "%s(): addr 0x%02X ret 0x%08X bytes %d\n", __func__,
+	  addr, *(unsigned *) cmdbuf, bytes_xfered);
 
-	ret = cmdbuf[0];
+	if (!bytes_xfered)
+		ret = -1;
+	else
+		ret = cmdbuf[--bytes_xfered]; /* this is the actual value */
 
 out:
 	mutex_unlock(&ftdi_isa_dev->intf_mutex);
