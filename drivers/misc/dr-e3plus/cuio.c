@@ -107,6 +107,7 @@ static DEFINE_SPINLOCK(cuio_state_lock);
 static int cuio_open_cnt;	/* #times opened */
 static int cuio_open_mode;	/* special open modes */
 
+static unsigned init_ioaddr;
 static u8  __iomem *ioaddr[MAXCU] = {(u8 *)0x300, };
 static u8  __iomem *ioaddr_map[MAXCU];
 static int evmax = EVMAX;
@@ -195,7 +196,7 @@ cuio_timeout(struct timer_list *arg)
 	struct clientdata *cp = (struct clientdata *)arg;
 	cuio_record_data();
 	if (!cp->done) {
-		add_timer(&cu_timer);
+		mod_timer(&cu_timer, round_jiffies(jiffies + (HZ/10)));
 	}
 }
 
@@ -567,7 +568,7 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 			k = READB(ioaddr_map[i]+3);
 			kfree(fpgadata);
 			if (cudebug >= 0) {
-				printk(KERN_INFO "CU load FPGA: done. Type %d{%s} @ %px rev %d\n", cutype[i],cutypes[cutype[i]], ioaddr[i], k);
+				printk(KERN_INFO "CU load FPGA: done. Type %d {%s} @ %px rev %d\n", cutype[i],cutypes[cutype[i]], ioaddr[i], k);
  				printk(KERN_INFO "CU load FPGA: done -> addr %px rev %d\n", ioaddr[i], k);
 			}
 
@@ -594,7 +595,7 @@ cuio_release(struct inode *ip, struct file *fp)
 
 		cu_data.done = 1;
 		if (cuboards[1] > 0) {
-			del_timer(&cu_timer);
+			del_timer_sync(&cu_timer);
 		}
 
 		if (cudebug) printk(KERN_INFO "CU device release\n");
@@ -611,12 +612,14 @@ cuio_release(struct inode *ip, struct file *fp)
 int
 cuio_open(struct inode *ip, struct file *fp)
 {
+	int ret = 0;
+
 	spin_lock(&cuio_state_lock);
 
 	if ((cuio_open_cnt && (fp->f_flags & O_EXCL)) ||
 	    (cuio_open_mode & O_EXCL)) {
-		spin_unlock(&cuio_state_lock);
-		return -EBUSY;
+		ret = -EBUSY;
+		goto out;
 	}
 
 	if (cudebug) printk(KERN_INFO "CU device open\n");
@@ -624,14 +627,13 @@ cuio_open(struct inode *ip, struct file *fp)
 	if ((cuboards[1] > 0) || (cuboards[2] > 0) || (cuboards[3] > 0))  {
 		if (cuio_open_cnt == 0) {
 
+			cu_timer.expires = round_jiffies(jiffies + (HZ/10));
 			timer_setup(&cu_timer, cuio_timeout, (unsigned long) &cu_data);
-			mod_timer(&cu_timer, round_jiffies(jiffies + (HZ/10)));
 
 			cu_eventlist.basetime = jiffies;
 			cu_eventlist.nevents = 0;
 			cu_eventlist.firstevent = 0;
 			cuio_record_data();
-			add_timer(&cu_timer);
 		} else {
 			if (cudebug) printk(KERN_INFO "CU non-initial open\n");
 		}
@@ -642,12 +644,12 @@ cuio_open(struct inode *ip, struct file *fp)
 
 	} else {
 		if (cudebug) printk(KERN_INFO "CU No type 1 boards to open\n");
-		return -ENODEV;
+		ret = -ENODEV;
 	}
 
+out:
 	spin_unlock(&cuio_state_lock);
-
-	return 0;
+	return ret;
 }
 
 int
@@ -727,16 +729,20 @@ cuio_init(void)
 			return -ENODEV;
 	}
 
+	if (init_ioaddr)
+		ioaddr[0] = (u8 *) init_ioaddr;
+
 	for (i = 0; (i < MAXCU); i++) {
 		ioaddr[i] = boardp;
 		boardp += 2;
 		if ((cutype[i] = cuio_probe(ioaddr[i], 4, cutype[i])) <= 0) {
-			printk(KERN_ERR "CU module failed (%d) with bad hardware at 0x%px\n", cutype[i], ioaddr[i]);
+			if (cudebug)
+				printk(KERN_DEBUG "CU module failed (%d) with bad hardware at 0x%px\n", cutype[i], ioaddr[i]);
 			continue;
 		}
 
 		cucount++;
-		printk(KERN_DEBUG "DRMCC CU card type %d{%s} found at 0x%px\n", cutype[i],cutypes[cutype[i]], ioaddr[i]);
+		printk(KERN_INFO "DRMCC CU card type %d {%s} found at 0x%px\n", cutype[i],cutypes[cutype[i]], ioaddr[i]);
 
 		if (cutype[i] <= MAXCUTYPE){
 			int bi = cuboards[cutype[i]]++;
@@ -773,19 +779,24 @@ cuio_init(void)
 void
 cuio_exit(void)
 {
+	del_timer_sync(&cu_timer);
 	if (cuevents)
 		kfree(cuevents);
 	misc_deregister(&cuio);
 	printk(KERN_INFO "DRMCC CU module unloaded\n");
 }
 
-late_initcall(cuio_init);
+module_init(cuio_init);
 module_exit(cuio_exit);
 
 MODULE_PARM_DESC(cudebug, "the debug level (default 0)");
+module_param_named(cudebug, cudebug, uint, 0644);
 MODULE_PARM_DESC(ioaddr, "the I/O port for the device (default 0x300)");
+module_param_named(ioaddr, init_ioaddr, uint, 0644);
 MODULE_PARM_DESC(evmax, "the maximum number of events to save (def 100, max 255)");
+module_param_named(evmax, evmax, uint, 0644);
 MODULE_PARM_DESC(cuwait, "delay in usec, before reading data (def 0)");
+module_param_named(cuwait, cuwait, uint, 0644);
 MODULE_AUTHOR("David Keeffe");
 MODULE_DESCRIPTION("CUIO Driver");
 MODULE_LICENSE("GPL");
