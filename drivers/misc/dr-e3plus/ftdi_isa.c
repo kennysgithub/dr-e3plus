@@ -167,7 +167,7 @@ static int ftdi_mcu_write(u8 value, volatile void __iomem *_addr)
 static int ftdi_mcu_read(const volatile void __iomem *_addr)
 {
 	unsigned addr = (unsigned) _addr;
-	int bytes_xfered;
+	int bytes_xfered, buflen;
 	int ret;
 	u8 *cmdbuf;
 
@@ -186,13 +186,15 @@ static int ftdi_mcu_read(const volatile void __iomem *_addr)
 		cmdbuf, 4, &bytes_xfered, USB_CTRL_SET_TIMEOUT);
 	if (ret) {
 		dev_info(&ftdi_isa_dev->interface->dev,
-		  "%s(): ISA read cmd send ret %d bytes %d\n", __func__, ret, bytes_xfered);
+		  "%s(): ISA read cmd send 0x%04X ret %d bytes %d\n",
+			__func__, addr, ret, bytes_xfered);
 		goto out;
 	}
 
+	buflen = ftdi_isa_dev->xfer_buflen;
 	ret = usb_bulk_msg(ftdi_isa_dev->udev,
 		usb_rcvbulkpipe(ftdi_isa_dev->udev, ftdi_isa_dev->bulk_in_ep),
-		cmdbuf, 4, &bytes_xfered, USB_CTRL_SET_TIMEOUT);
+		cmdbuf, buflen, &bytes_xfered, USB_CTRL_SET_TIMEOUT);
 	if (ret) {
 		dev_info(&ftdi_isa_dev->interface->dev,
 		  "%s(): ISA read cmd recv 0x%04X ret %d bytes %d\n",
@@ -201,8 +203,8 @@ static int ftdi_mcu_read(const volatile void __iomem *_addr)
 	}
 
 	dev_dbg(&ftdi_isa_dev->interface->dev,
-	  "%s(): addr 0x%02X ret 0x%08X bytes %d\n", __func__,
-	  addr, *(unsigned *) cmdbuf, bytes_xfered);
+		"%s():  addr 0x%04X ret 0x%08X bytes %d\n", __func__,
+		addr, *(unsigned *) cmdbuf, bytes_xfered);
 
 	if (!bytes_xfered)
 		ret = -1;
@@ -222,11 +224,12 @@ u8 ftdi_isa_read(const volatile void __iomem *addr, int inb)
 		return READ_NO_DEVICE;
 	}
 
-	dev_dbg(&ftdi_isa_dev->interface->dev, "%s(): addr %px %s\n",
-		__func__, addr, inb ? "INB" : "");
-
 	ret = ftdi_mcu_read(addr);
-	return (ret < 0) ? READ_NO_DEVICE : ret;
+	ret = (ret < 0) ? READ_NO_DEVICE : ret;
+	dev_dbg(&ftdi_isa_dev->interface->dev, "%s():  addr 0x%04X ret 0x%02X%s\n",
+		__func__, (unsigned) addr, ret, inb ? " INB" : "");
+
+	return ret;
 }
 EXPORT_SYMBOL(ftdi_isa_read);
 
@@ -237,8 +240,8 @@ void ftdi_isa_write(u8 value, volatile void __iomem *addr, int outb)
 		return;
 	}
 
-	dev_dbg(&ftdi_isa_dev->interface->dev, "%s(): value 0x%02X addr %px %s\n",
-		__func__, value, (char *) addr, outb ? "OUTB" : "");
+	dev_dbg(&ftdi_isa_dev->interface->dev, "%s(): addr 0x%04X val 0x%02X%s\n",
+		__func__, (unsigned) addr, value, outb ? " OUTB" : "");
 
 	ftdi_mcu_write(value, addr);
 }

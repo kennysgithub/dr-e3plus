@@ -48,13 +48,8 @@ struct cu_modules {
 		char modinfo[DRMCC_MODSPACE];
 };
 
-
-#define DRMCC_CU_IN 20
-#define DRMCC_CU_OUT 21
-
 #define DRMCC_IOCTL_BASE 'U'
-
-#define DRMCC_GET_DIBITS	_IOR(DRMCC_IOCTL_BASE, 0, unsigned long long)
+#define DRMCC_GET_DIBITS _IOR(DRMCC_IOCTL_BASE, 0, unsigned long long)
 #define DRMCC_PUT_DOBITS _IOW(DRMCC_IOCTL_BASE, 1, struct cu_digitalout)
 #define DRMCC_GET_DOBITS _IOW(DRMCC_IOCTL_BASE, 2, unsigned long)
 #define DRMCC_GET_EVSIZE _IOR(DRMCC_IOCTL_BASE, 3, int)

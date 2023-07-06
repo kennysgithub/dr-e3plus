@@ -114,9 +114,13 @@ static int evmax = EVMAX;
 static int cutype[MAXCU];
 static int cuboards[MAXCUTYPE+1];
 static int cuboardmap[MAXCUTYPE+1][MAXCU];
-static int cudebug = 0;
-static int cucount = 0;
-static int cuwait = 0;
+static int cucount;
+static int cuwait;
+#ifdef DEBUG
+static int cudebug = 1;
+#else
+static int cudebug;
+#endif
 
 static struct cu_eventlist cu_eventlist;
 static struct cu_event *cuevents;
@@ -248,7 +252,12 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 	struct cu_modules mod_data;
 	unsigned char *fpgadata;
 	unsigned char v0, v1;
+	int ret = 0;
+
 	if (cudebug) printk(KERN_INFO "CU device ioctl: %x -> %lx\n", cmd, arg);
+
+	spin_lock(&cuio_state_lock);
+
 	switch(cmd) {
 		case DRMCC_GET_MODULES:
 			if (cudebug) printk(KERN_INFO "CU GET MODULES\n");
@@ -263,9 +272,12 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 				if (cudebug) printk(KERN_INFO "CU device report %d A: %d -> %d\n", i, cutype[i], mod_data.modinfo[cutype[i]]);
 			}
 			if (copy_to_user((void *)arg, &mod_data, sizeof(struct cu_modules))) {
-				return -EFAULT;
+				ret = -EFAULT;
+				goto out;
 			}
-			return 0;
+			ret = 0;
+			break;
+
 		case DRMCC_GET_DOBITS:
 			val_o = 0;
 			for (i = 0, k = 0; i < MAXCU; i++) {
@@ -275,15 +287,19 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 				k++;
 			}
 			if (k == 0) {
-				return -EINVAL;
+				ret = -EINVAL;
+				goto out;
 			}
-			return put_user(val_o, (unsigned long *)arg);
+			ret = put_user(val_o, (unsigned long *)arg);
+			break;
+
 		case DRMCC_PUT_DOBITS:
 			/*
 			 * params are a single input structure
 			 */
 			if (copy_from_user(&dobuf, (void *)arg, sizeof(struct cu_digitalout))) {
-				return -EFAULT;
+				ret = -EFAULT;
+				goto out;
 			}
 			val_o = 0;
 			for (i = 0, k = 0; i < MAXCU; i++) {
@@ -299,13 +315,18 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 				k++;
 			}
 			if (k == 0) {
-				return -EINVAL;
+				ret = -EINVAL;
+				goto out;
 			}
-			return 0;
+			ret = 0;
+			break;
+
 		case DRMCC_CLR_EVDATA:
 			cu_eventlist.nevents = 0;
 			cu_eventlist.firstevent = 0;
-			return 0;
+			ret = 0;
+			break;
+
 		case DRMCC_GET_EVDATA:
 			if (copy_to_user((void *)arg, &cu_eventlist, sizeof(struct cu_eventlist))) {
 				return -EFAULT;
@@ -315,13 +336,19 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 			if (copy_to_user((void *)(&(up->data)), cuevents, evmax*sizeof(struct cu_event))) {
 				return -EFAULT;
 			}
-			return 0;
+			ret = 0;
+			break;
+
 		case DRMCC_GET_EVSIZE:
 			if (cuevents == NULL) return -EINVAL;
-			return put_user(cu_eventlist.nevents, (int *)arg);
+			ret = put_user(cu_eventlist.nevents, (int *)arg);
+			break;
+
 		case DRMCC_GET_EVMAX:
 			if (cuevents == NULL) return -EINVAL;
-			return put_user(cu_eventlist.maxevents, (int *)arg);
+			ret = put_user(cu_eventlist.maxevents, (int *)arg);
+			break;
+
 		case DRMCC_GET_DIBITS:
 			val_i = 0;
 			for (i = 0, k = 0; i < MAXCU; i++) {
@@ -334,30 +361,36 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 				k++;
 			}
 			if (k == 0) {
-				return -EINVAL;
+				ret = -EINVAL;
+				goto out;
 			}
 			if (cudebug > 1) printk(KERN_INFO "CU GET DIBITS: %Lx\n", val_i);
-			return copy_to_user((unsigned long long *)arg, &val_i, sizeof(unsigned long long));
+			ret = copy_to_user((unsigned long long *)arg, &val_i, sizeof(unsigned long long));
+			break;
 
 		case DRMCC_PUT_ANALOG:
 			/*
 			 * params are a single input structure
 			 */
 			if (copy_from_user(&aobuf, (void *)arg, sizeof(struct cu_analogout))) {
-				return -EFAULT;
+				ret = -EFAULT;
+				goto out;
 			}
 			if (cudebug) {
 				printk(KERN_INFO "CU PUT ANALOG: unit %d channel %d value %ld (0x%lx)\n", aobuf.unit, aobuf.channel, aobuf.value, aobuf.value);
 			}
 			if (aobuf.unit > cuboards[3] || aobuf.unit > MAXCU) {
-				return -EINVAL;
+				ret = -EINVAL;
+				goto out;
 			}
 			if (aobuf.channel > MAX_AO_CHAN) {
-				return -EINVAL;
+				ret = -EINVAL;
+				goto out;
 			}
 			i = cuboardmap[3][aobuf.unit];
 			if (i < 0 || i >= MAXCU || ioaddr[i] == 0 || cutype[i] != 3) {
-					return -EINVAL;
+					ret = -EINVAL;
+					goto out;
 			}
 			k = aobuf.channel;
 			/*
@@ -387,24 +420,28 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 				printk(KERN_INFO "CU PUT ANALOG DEV@%px: SPI ready after %d\n", ioaddr[i], c1);
 			}
 			WRITEB(0xff, ioaddr_map[i]+1);
-			return 0;
+			ret =  0;
 			break;
+
 		case DRMCC_GET_ANALOG:
 			/*
 			 * params are a single input structure
 			 */
 			if (copy_from_user(&aibuf, (void *)arg, sizeof(struct cu_analogin))) {
-				return -EFAULT;
+				ret = -EFAULT;
+				goto out;
 			}
 			if (cudebug) {
 				printk(KERN_INFO "CU GET ANALOG: unit %d\n", aibuf.unit);
 			}
 			if (aibuf.unit > cuboards[3] || aibuf.unit > MAXCU) {
-				return -EINVAL;
+				ret = -EINVAL;
+				goto out;
 			}
 			i = cuboardmap[3][aibuf.unit];
 			if (i < 0 || i >= MAXCU || ioaddr[i] == 0 || cutype[i] != 3) {
-					return -EINVAL;
+					ret = -EINVAL;
+					goto out;
 			}
 			/*
 			 * i is the hardware info index
@@ -442,7 +479,8 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 					}
 					WRITEB(0xff, ioaddr_map[i]+1);
 					if (cudebug > 1) {
-						printk(KERN_INFO "CU GET ANALOG: raw CT[%d] %lx -> (%d) %d %lx %ld\n", k, ctemp, cchan, l_actual, cval[(k+1)-1][l_actual], cval[(k+1)-1][l_actual] );
+						printk(KERN_INFO "CU GET ANALOG: raw CT[%d] %lx -> (%d) %d %lx %ld\n",
+							k, ctemp, cchan, l_actual, cval[(k+1)-1][l_actual], cval[(k+1)-1][l_actual] );
 					}
 				}
 				for (k = 0; k < 2; k++) {
@@ -458,7 +496,8 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 					}
 					WRITEB(0xff, ioaddr_map[i]+1);
 					if (cudebug > 1) {
-						printk(KERN_INFO "CU GET ANALOG: raw RTD[%d] %lx -> (%d) %d %lx %ld\n", k, ctemp, cchan, l_actual, cval[(k+3)-1][l_actual], cval[(k+3)-1][l_actual] );
+						printk(KERN_INFO "CU GET ANALOG: raw RTD[%d] %lx -> (%d) %d %lx %ld\n",
+							k, ctemp, cchan, l_actual, cval[(k+3)-1][l_actual], cval[(k+3)-1][l_actual] );
 					}
 				}
 				/*
@@ -477,7 +516,8 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 					}
 					WRITEB(0xff, ioaddr_map[i]+1);
 					if (cudebug > 1) {
-						printk(KERN_INFO "CU GET ANALOG: raw DC[%d] %lx -> (%d) %d %lx %ld\n", k, ctemp, cchan, l_actual, cval[(k+5)-1][l_actual], cval[(k+5)-1][l_actual] );
+						printk(KERN_INFO "CU GET ANALOG: raw DC[%d] %lx -> (%d) %d %lx %ld\n",
+							k, ctemp, cchan, l_actual, cval[(k+5)-1][l_actual], cval[(k+5)-1][l_actual] );
 					}
 				}
 			}
@@ -501,35 +541,40 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 				printk(KERN_INFO "CU GET ANALOG: RTD[%d] %ld \n", 0, aibuf.rtvalue[0]);
 				printk(KERN_INFO "CU GET ANALOG: RTD[%d] %ld \n", 1, aibuf.rtvalue[1]);
 			}
-			return copy_to_user((struct cu_analogin *)arg, &aibuf, sizeof(struct cu_analogin));
+			ret = copy_to_user((struct cu_analogin *)arg, &aibuf, sizeof(struct cu_analogin));
+			break;
 
 		case DRMCC_LOAD_FPGA:
 			/*
 			 * params are a single input structure
 			 */
 			if (copy_from_user(&fpgabuf, (void *)arg, sizeof(struct cu_fpgadata))) {
-				return -EFAULT;
+				ret = -EFAULT;
+				goto out;
 			}
 			if (cudebug) {
 				printk(KERN_INFO "CU LOAD FPGA: type %d unit %d length %ld\n", fpgabuf.type, fpgabuf.unit, fpgabuf.length);
 			}
 			/* TODO: consider type 1 boards too */
 			if ((fpgabuf.type != 1 && fpgabuf.type != 3) || fpgabuf.unit > cuboards[fpgabuf.type] || fpgabuf.unit > MAXCU) {
-				return -EINVAL;
+				ret = -EINVAL;
+				goto out;
 			}
 			i = cuboardmap[fpgabuf.type][fpgabuf.unit];
 			if (cudebug) {
 				printk(KERN_INFO "CU LOAD FPGA: board map -> %d\n", i);
 			}
 			if (i < 0 || i >= MAXCU || ioaddr[i] == 0 || cutype[i] != fpgabuf.type) {
-					return -EINVAL;
+					ret = -EINVAL;
+					goto out;
 			}
 			fpgadata = (unsigned char *)kmalloc(fpgabuf.length, GFP_KERNEL);
 			if (cudebug > 1) {
 				printk(KERN_INFO "CU LOAD FPGA: copying buffer from %px to %px\n", fpgabuf.data, fpgadata);
 			}
 			if (copy_from_user(fpgadata, (void *)fpgabuf.data, fpgabuf.length)) {
-				return -EFAULT;
+				ret = -EFAULT;
+				goto out;
 			}
 			if (cudebug > 2) {
 				printk(KERN_INFO "CU LOAD FPGA: buffer\n");
@@ -572,13 +617,17 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
  				printk(KERN_INFO "CU load FPGA: done -> addr %px rev %d\n", ioaddr[i], k);
 			}
 
-			return 0;
-
+			ret = 0;
+			break;
 
 		default:
-			return -EINVAL;
+			ret = -EINVAL;
+			break;
 	}
-	return -EINVAL;
+
+out:
+	spin_unlock(&cuio_state_lock);
+	return ret;
 }
 
 int
@@ -700,13 +749,19 @@ cuio_probe(void __iomem *port_raw, int range, int type)
 
 struct file_operations cuio_fops = {
 	.owner = THIS_MODULE,
-	.compat_ioctl = cuio_ioctl,
+	.unlocked_ioctl = cuio_ioctl,
 	.open = cuio_open,
 	.release = cuio_release
 };
 
+#ifdef DRMCC_CU_IN
+#define CUIO_MINOR_BASE     (DRMCC_CU_IN)
+#else
+#define CUIO_MINOR_BASE     (MISC_DYNAMIC_MINOR)
+#endif
+
 static struct miscdevice cuio = {
-	.minor = DRMCC_CU_IN,
+	.minor = CUIO_MINOR_BASE,
 	.name = "cuio",
 	.fops = &cuio_fops
 };
