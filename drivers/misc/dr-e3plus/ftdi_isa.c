@@ -95,7 +95,7 @@ static int ftdi_isa_open(struct inode *inode, struct file *file)
 	dev = usb_get_intfdata(interface);
 	if (!dev) {
 		pr_err("%s(): no dev\n", __func__);
-		ret = -EBUSY;
+		ret = -ENODEV;
 		goto exit_locked;
 	}
 
@@ -130,8 +130,37 @@ ftdi_isa_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 static int ftdi_isa_release(struct inode *inode, struct file *file)
 {
+	int ret;
+	struct ftdi_isa_device *dev = NULL;
+	struct usb_interface *interface;
+
 	pr_debug(KERN_INFO "%s(): %d\n", __func__, __LINE__);
-	return 0;
+
+	ret = mutex_lock_interruptible(&ftdi_isa_mutex);
+	if (ret)
+		return ret;
+
+	interface = usb_find_interface(&ftdi_isa_driver, iminor(inode));
+	if (!interface) {
+		pr_err("%s(): can't find FTDI dev for minor %d\n",
+			__func__, iminor(inode));
+		ret = -ENODEV;
+		goto exit_locked;
+	}
+
+	dev = usb_get_intfdata(interface);
+	if (!dev) {
+		pr_err("%s(): no dev\n", __func__);
+		ret = -ENODEV;
+		goto exit_locked;
+	}
+
+	dev->opened = 0;
+	ret = 0;
+
+exit_locked:
+	mutex_unlock(&ftdi_isa_mutex);
+	return ret;
 }
 
 static int ftdi_mcu_write(u8 value, volatile void __iomem *_addr)
@@ -158,6 +187,8 @@ static int ftdi_mcu_write(u8 value, volatile void __iomem *_addr)
 		dev_info(&ftdi_isa_dev->interface->dev,
 		  "%s(): ISA write cmd send 0x%04X:0x%02X ret %d bytes %d\n",
 		__func__, addr, value, ret, bytes_xfered);
+	} else {
+		ret = bytes_xfered - 3;
 	}
 
 	mutex_unlock(&ftdi_isa_dev->intf_mutex);
@@ -180,6 +211,7 @@ static int ftdi_mcu_read(const volatile void __iomem *_addr)
 	cmdbuf[1] = addr >> 8;
 	cmdbuf[2] = addr & 0xFF;
 	cmdbuf[3] = SEND_IMMEDIATE;
+	cmdbuf[4] = READ_NO_DEVICE;	/* set 0xFF as the "nothing read" value */
 
 	ret = usb_bulk_msg(ftdi_isa_dev->udev,
 		usb_sndbulkpipe(ftdi_isa_dev->udev, ftdi_isa_dev->bulk_out_ep),
@@ -203,7 +235,7 @@ static int ftdi_mcu_read(const volatile void __iomem *_addr)
 	}
 
 	dev_dbg(&ftdi_isa_dev->interface->dev,
-		"%s():  addr 0x%04X ret 0x%08X bytes %d\n", __func__,
+		"%s():  addr 0x%04X ret 0x%08X xfered %d\n", __func__,
 		addr, *(unsigned *) cmdbuf, bytes_xfered);
 
 	if (!bytes_xfered)
@@ -225,6 +257,11 @@ u8 ftdi_isa_read(const volatile void __iomem *addr, int inb)
 	}
 
 	ret = ftdi_mcu_read(addr);
+
+	// HACK; last USB command written is reply if no device responds
+	if (inb && (ret == SEND_IMMEDIATE))
+		ret = READ_NO_DEVICE;
+
 	ret = (ret < 0) ? READ_NO_DEVICE : ret;
 	dev_dbg(&ftdi_isa_dev->interface->dev, "%s():  addr 0x%04X ret 0x%02X%s\n",
 		__func__, (unsigned) addr, ret, inb ? " INB" : "");
@@ -235,15 +272,17 @@ EXPORT_SYMBOL(ftdi_isa_read);
 
 void ftdi_isa_write(u8 value, volatile void __iomem *addr, int outb)
 {
+	int ret;
+
 	if (!ftdi_isa_dev) {
 		pr_err("%s(): no device?!\n", __func__);
 		return;
 	}
 
-	dev_dbg(&ftdi_isa_dev->interface->dev, "%s(): addr 0x%04X val 0x%02X%s\n",
-		__func__, (unsigned) addr, value, outb ? " OUTB" : "");
+	ret = ftdi_mcu_write(value, addr);
 
-	ftdi_mcu_write(value, addr);
+	dev_dbg(&ftdi_isa_dev->interface->dev, "%s(): addr 0x%04X val 0x%02X%s ret %d\n",
+		__func__, (unsigned) addr, value, outb ? " OUTB" : "", ret);
 }
 EXPORT_SYMBOL_GPL(ftdi_isa_write);
 
@@ -259,7 +298,7 @@ static const struct file_operations ftdi_isa_fops = {
 };
 
 static struct usb_class_driver ftdi_isa_class = {
-	.name		= "usb/ftdi_isa%d",
+	.name		= "usb/ftdi_isa",
 	.fops		= &ftdi_isa_fops,
 	.minor_base	= FTDI_ISA_MINOR_BASE,
 };
@@ -333,12 +372,13 @@ static int ftdi_isa_probe(struct usb_interface *interface,
 	}
 
 	dev->xfer_buflen = min(usb_endpoint_maxp(iep), usb_endpoint_maxp(oep));
-	dev->xfer_buffer = kmalloc(dev->xfer_buflen, GFP_KERNEL);
+	dev->xfer_buffer = kmalloc(dev->xfer_buflen, GFP_DMA);
 	if (!dev->xfer_buffer) {
 		dev_err(&interface->dev, "Can't allocate xfer buffer\n");
 		goto exit_memfree;
 	}
 
+	/* not strictly necessary, may query some other value */
 	ret = ftdi_isa_recv_command(dev->udev,
 		SIO_GET_LATENCY_TIMER_REQUEST,
 		0,
@@ -349,7 +389,7 @@ static int ftdi_isa_probe(struct usb_interface *interface,
 		dev_err(&interface->dev, "FTDI latency timer get ret %d\n", ret);
 		goto exit_memfree;
 	} else {
-		dev_info(&interface->dev, "FTDI latency timer val %d\n", (int) dev->xfer_buffer[0]);
+		dev_dbg(&interface->dev, "FTDI latency timer val %d\n", (int) dev->xfer_buffer[0]);
 	}
 
 	/* setup clock Divide-by-5 */
@@ -375,8 +415,7 @@ static int ftdi_isa_probe(struct usb_interface *interface,
 		ftdi_isa_dev = dev;
 	mutex_unlock(&ftdi_isa_mutex);
 
-	dev_info(&interface->dev, "FTDI-to-ISA Bus driver intf %d initialized\n",
-		dev->iface_desc->desc.bInterfaceNumber);
+	dev_info(&interface->dev, "FTDI USB-to-ISA Bus driver initialized\n");
 	return 0;
 
 exit_usbfree:
@@ -409,6 +448,7 @@ static void ftdi_isa_disconnect(struct usb_interface *interface)
 	kfree(dev->xfer_buffer);
 	usb_put_dev(dev->udev);
 	kfree(dev);
+	dev = NULL;
 out:
 	mutex_unlock(&ftdi_isa_mutex);
 }

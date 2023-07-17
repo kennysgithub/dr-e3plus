@@ -103,7 +103,7 @@ static const char rcsid[] __attribute__ ((unused)) = "$Id$";
 #define EVMAX 100
 #define MAX_AO_CHAN 3
 
-static DEFINE_SPINLOCK(cuio_state_lock);
+static DEFINE_MUTEX(cuio_state_lock);
 static int cuio_open_cnt;	/* #times opened */
 static int cuio_open_mode;	/* special open modes */
 
@@ -256,7 +256,9 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 
 	if (cudebug) printk(KERN_INFO "CU device ioctl: %x -> %lx\n", cmd, arg);
 
-	spin_lock(&cuio_state_lock);
+	ret = mutex_lock_interruptible(&cuio_state_lock);
+	if (ret)
+		return ret;
 
 	switch(cmd) {
 		case DRMCC_GET_MODULES:
@@ -626,14 +628,19 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 	}
 
 out:
-	spin_unlock(&cuio_state_lock);
+	mutex_unlock(&cuio_state_lock);
 	return ret;
 }
 
 int
 cuio_release(struct inode *ip, struct file *fp)
 {
-	spin_lock(&cuio_state_lock);
+
+	int ret;
+
+	ret = mutex_lock_interruptible(&cuio_state_lock);
+	if (ret)
+		return ret;
 
 	cuio_open_cnt--;
 
@@ -653,7 +660,7 @@ cuio_release(struct inode *ip, struct file *fp)
 		if (cudebug) printk(KERN_INFO "CU non-final release\n");
 	}
 
-	spin_unlock(&cuio_state_lock);
+	mutex_unlock(&cuio_state_lock);
 
 	return 0;
 }
@@ -663,7 +670,9 @@ cuio_open(struct inode *ip, struct file *fp)
 {
 	int ret = 0;
 
-	spin_lock(&cuio_state_lock);
+	ret = mutex_lock_interruptible(&cuio_state_lock);
+	if (ret)
+		return ret;
 
 	if ((cuio_open_cnt && (fp->f_flags & O_EXCL)) ||
 	    (cuio_open_mode & O_EXCL)) {
@@ -697,7 +706,7 @@ cuio_open(struct inode *ip, struct file *fp)
 	}
 
 out:
-	spin_unlock(&cuio_state_lock);
+	mutex_unlock(&cuio_state_lock);
 	return ret;
 }
 
@@ -785,11 +794,10 @@ cuio_init(void)
 	}
 
 	if (init_ioaddr)
-		ioaddr[0] = (u8 *) init_ioaddr;
+		boardp = (u8 *) init_ioaddr;
 
-	for (i = 0; (i < MAXCU); i++) {
+	for (i = 0; (i < MAXCU); i++, boardp += 4) {
 		ioaddr[i] = boardp;
-		boardp += 2;
 		if ((cutype[i] = cuio_probe(ioaddr[i], 4, cutype[i])) <= 0) {
 			if (cudebug)
 				printk(KERN_DEBUG "CU module failed (%d) with bad hardware at 0x%px\n", cutype[i], ioaddr[i]);
