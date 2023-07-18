@@ -250,10 +250,16 @@ out:
 
 u8 ftdi_isa_read(const volatile void __iomem *addr, int inb)
 {
-	u8 ret = 0;
+	u8 ret;
+
+	ret = mutex_lock_interruptible(&ftdi_isa_mutex);
+	if (ret)
+		return READ_NO_DEVICE;
+
 	if (!ftdi_isa_dev) {
 		pr_err("%s(): no device?!\n", __func__);
-		return READ_NO_DEVICE;
+		ret = READ_NO_DEVICE;
+		goto out;
 	}
 
 	ret = ftdi_mcu_read(addr);
@@ -266,6 +272,8 @@ u8 ftdi_isa_read(const volatile void __iomem *addr, int inb)
 	dev_dbg(&ftdi_isa_dev->interface->dev, "%s():  addr 0x%04X ret 0x%02X%s\n",
 		__func__, (unsigned) addr, ret, inb ? " INB" : "");
 
+out:
+	mutex_unlock(&ftdi_isa_mutex);
 	return ret;
 }
 EXPORT_SYMBOL(ftdi_isa_read);
@@ -274,15 +282,22 @@ void ftdi_isa_write(u8 value, volatile void __iomem *addr, int outb)
 {
 	int ret;
 
+	ret = mutex_lock_interruptible(&ftdi_isa_mutex);
+	if (ret)
+		return;
+
 	if (!ftdi_isa_dev) {
 		pr_err("%s(): no device?!\n", __func__);
-		return;
+		goto out;
 	}
 
 	ret = ftdi_mcu_write(value, addr);
 
 	dev_dbg(&ftdi_isa_dev->interface->dev, "%s(): addr 0x%04X val 0x%02X%s ret %d\n",
 		__func__, (unsigned) addr, value, outb ? " OUTB" : "", ret);
+
+out:
+	mutex_unlock(&ftdi_isa_mutex);
 }
 EXPORT_SYMBOL_GPL(ftdi_isa_write);
 
@@ -399,7 +414,7 @@ static int ftdi_isa_probe(struct usb_interface *interface,
 		usb_sndbulkpipe(dev->udev, dev->bulk_out_ep),
 		dev->xfer_buffer, 1, &bytes_xfered, USB_CTRL_SET_TIMEOUT);
 	if (ret) {
-		dev_err(&dev->interface->dev,
+		dev_err(&interface->dev,
 		  "%s(): Div-by-5 cmd send ret %d bytes %d\n", __func__, ret, bytes_xfered);
 		goto exit_usbbuf_free;
 	}
