@@ -71,6 +71,8 @@ enum ftdi_mpsse_mode
 
 #define SIO_RESET_SIO 0
 
+#define READ_NO_DEVICE          (0xFF)  // Simulate read on non-existant address
+
 u8 ftdi_isa_read(const volatile void __iomem *addr, int inb);
 void ftdi_isa_write(u8 value, volatile void __iomem *addr, int outb);
 

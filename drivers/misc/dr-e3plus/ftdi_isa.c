@@ -257,7 +257,7 @@ u8 ftdi_isa_read(const volatile void __iomem *addr, int inb)
 		return READ_NO_DEVICE;
 
 	if (!ftdi_isa_dev) {
-		pr_err("%s(): no device?!\n", __func__);
+		pr_debug("%s(): no FTDI device\n", __func__);
 		ret = READ_NO_DEVICE;
 		goto out;
 	}
@@ -287,7 +287,7 @@ void ftdi_isa_write(u8 value, volatile void __iomem *addr, int outb)
 		return;
 
 	if (!ftdi_isa_dev) {
-		pr_err("%s(): no device?!\n", __func__);
+		pr_debug("%s(): no FTDI device\n", __func__);
 		goto out;
 	}
 

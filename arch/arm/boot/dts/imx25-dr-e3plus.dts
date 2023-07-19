@@ -227,6 +227,14 @@
 				MX25_PAD_CSPI1_MISO__CSPI1_MISO		0x80000000
 			>;
 		};
+
+		pinctrl_cuio: cuiogrp {
+			fsl,pins = <
+				/* PAD_CTL_PUE                     (1 << 6)
+				   PAD_CTL_PUS_100K_DOWN           (0 << 4) */
+				MX25_PAD_DE_B__GPIO_2_20		0x80000040
+			>;
+		};
 	};
 };
 
@@ -240,15 +248,18 @@
 &usbhost1 {
 	phy_type = "serial";
 	dr_mode = "host";
-	status = "okay";
 	vbus-supply = <&reg_usb_host>;
+	over-current-active-high;
+	status = "okay";
 };
 
 &usbotg {
 	external-vbus-divider;
+	phy_type = "serial";
+	dr_mode = "peripheral";
+	over-current-active-low;
 	status = "okay";
 };
-
 
 &tscadc {
 	status = "okay";
@@ -295,6 +306,11 @@
 	};
 };
 
+&lcdc {
+	status = "okay";
+	display = <&ra8875>;
+};
+
 / {
 	e3-watchdog {
 		compatible = "linux,wdt-gpio";
@@ -331,5 +347,30 @@
 			color = <LED_COLOR_ID_YELLOW>;
 			gpio = <&gpio3 24 GPIO_ACTIVE_LOW>;
 		};
+	};
+
+	ra8875: display {
+		compatible = "raio,ra8875";
+		status = "disabled";
+
+		bus-width = <8>;
+		model = "E3PLUS-DISPLAY";
+		bits-per-pixel = <1>;
+
+		display-timings {
+			native-timings = <&e3plus_lcd_timings>;
+			e3plus_lcd_timings: 320x240 {
+				hactive = <320>;
+				vactive = <240>;
+
+			};
+		};
+	};
+
+	cuio {
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_cuio>;
+		compatible = "dynamicratings,cuio";
+		isa-reset-gpios = <&gpio2 20 GPIO_ACTIVE_HIGH>;
 	};
 };

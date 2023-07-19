@@ -94,6 +94,9 @@ static const char rcsid[] __attribute__ ((unused)) = "$Id$";
 #include <asm/io.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
+#include <linux/of_address.h>
+#include <linux/platform_device.h>
+#include <linux/gpio/consumer.h>
 
 #include "drmcc.h"
 #include "ftdi_isa.h"
@@ -764,9 +767,9 @@ struct file_operations cuio_fops = {
 };
 
 #ifdef DRMCC_CU_IN
-#define CUIO_MINOR_BASE     (DRMCC_CU_IN)
+#define CUIO_MINOR_BASE		(DRMCC_CU_IN)
 #else
-#define CUIO_MINOR_BASE     (MISC_DYNAMIC_MINOR)
+#define CUIO_MINOR_BASE		(MISC_DYNAMIC_MINOR)
 #endif
 
 static struct miscdevice cuio = {
@@ -775,23 +778,30 @@ static struct miscdevice cuio = {
 	.fops = &cuio_fops
 };
 
-static int __init
-cuio_init(void)
+static int cuio_init(struct platform_device *pdev)
 {
 	int i = 10;
 	int ret = 0;
 	u8 *boardp = ioaddr[0];
+	struct gpio_desc *isa_reset_gpio;
+	unsigned isa_sleep_time = 100; /* msec */
+
+	/* Wait for the USB-ISA bridge to come online */
+	/* Still a hack, have a better way to do this upcoming */
+	if (READB((unsigned *) 0x300) == READ_NO_DEVICE)
+			return -EPROBE_DEFER;
 
 	printk(KERN_INFO "DRMCC CU driver %s on %s\n", cuversion, cubuild);
 
-	/* Wait for the USB-ISA bridge to come online (and retry if non-existant hardware */
-	/* FIXME BAD HACK - change driver model to use PROBE_DEFER */
-	while ((ret = (int) READB((unsigned *) 0x300)) == 0xFF) {
-		printk(KERN_INFO "%s(): waiting for FTDI ISA driver\n", __func__);
-		msleep(1000);
-		if (!--i)
-			return -ENODEV;
-	}
+	isa_reset_gpio = devm_gpiod_get(&pdev->dev, "isa-reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(isa_reset_gpio))
+		return PTR_ERR(isa_reset_gpio);
+
+	if (cudebug)
+		dev_info(&pdev->dev, "%s(): resetting ISA Bus\n", __func__);
+
+	msleep(isa_sleep_time);
+	gpiod_set_value_cansleep(isa_reset_gpio, 0);
 
 	if (init_ioaddr)
 		boardp = (u8 *) init_ioaddr;
@@ -839,18 +849,43 @@ cuio_init(void)
 	return ret;
 }
 
-void
-cuio_exit(void)
+static int cuio_exit(struct platform_device *pdev)
 {
 	del_timer_sync(&cu_timer);
 	if (cuevents)
 		kfree(cuevents);
 	misc_deregister(&cuio);
 	printk(KERN_INFO "DRMCC CU module unloaded\n");
+
+	return 0;
 }
 
-module_init(cuio_init);
-module_exit(cuio_exit);
+static struct of_device_id cuio_match[] = {
+	{ .compatible = "dynamicratings,cuio", },
+	{},
+};
+
+static struct platform_driver cuio_driver = {
+	.driver = {
+		.name = "cuio",
+		.of_match_table = cuio_match,
+	},
+	.probe = cuio_init,
+	.remove = cuio_exit,
+};
+
+static int __init cuio_driver_init(void)
+{
+	return platform_driver_register(&cuio_driver);
+}
+
+static void __exit cuio_driver_exit(void)
+{
+	return platform_driver_unregister(&cuio_driver);
+}
+
+module_init(cuio_driver_init);
+module_exit(cuio_driver_exit);
 
 MODULE_PARM_DESC(cudebug, "the debug level (default 0)");
 module_param_named(cudebug, cudebug, uint, 0644);
