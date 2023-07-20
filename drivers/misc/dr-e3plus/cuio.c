@@ -585,15 +585,15 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 				printk(KERN_INFO "CU LOAD FPGA: buffer\n");
 				if (fpgabuf.length < 20) {
 					for (k = 0; k < fpgabuf.length; k++) {
-						printk(KERN_DEBUG "%d: %02x %02x\n", k, fpgadata[k], fpgabuf.data[k]);
+						printk(KERN_DEBUG "%d: %02x\n", k, fpgadata[k]);
 					}
 				} else {
 					for (k = 0; k < 10; k++) {
-						printk(KERN_DEBUG "%d: %02x %02x\n", k, fpgadata[k], fpgabuf.data[k]);
+						printk(KERN_DEBUG "%d: %02x\n", k, fpgadata[k]);
 					}
 					printk(KERN_DEBUG "....\n");
 					for (k = fpgabuf.length - 9; k < fpgabuf.length; k++) {
-						printk(KERN_DEBUG "%d: %02x %02x\n", k, fpgadata[k], fpgabuf.data[k]);
+						printk(KERN_DEBUG "%d: %02x\n", k, fpgadata[k]);
 					}
 				}
 				printk(KERN_DEBUG "\n");
@@ -606,9 +606,7 @@ cuio_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 			WRITEB(3, ioaddr_map[i]+3);
 			mdelay(1);
 
-			for(k = 0; k < fpgabuf.length; k++) {
-				WRITEB(fpgadata[k], ioaddr_map[i]);
-			}
+			ftdi_isa_write_multiple(fpgadata, ioaddr_map[i], fpgabuf.length);
 
 			udelay(5);
 			/* disable the programming mode */

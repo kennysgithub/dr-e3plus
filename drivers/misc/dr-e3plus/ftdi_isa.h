@@ -75,5 +75,6 @@ enum ftdi_mpsse_mode
 
 u8 ftdi_isa_read(const volatile void __iomem *addr, int inb);
 void ftdi_isa_write(u8 value, volatile void __iomem *addr, int outb);
+int ftdi_isa_write_multiple(u8 *values, volatile void __iomem *addr, size_t count);
 
 #endif	/* __FTDI_ISA_H */
