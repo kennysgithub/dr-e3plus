@@ -170,10 +170,6 @@ static int ftdi_mcu_write(u8 value, volatile void __iomem *_addr)
 	int ret;
 	u8 *cmdbuf;
 
-	ret = mutex_lock_interruptible(&ftdi_isa_dev->intf_mutex);
-	if (ret)
-		return ret;
-
 	cmdbuf = ftdi_isa_dev->xfer_buffer;
 	cmdbuf[0] = WRITE_EXTENDED;
 	cmdbuf[1] = addr >> 8;
@@ -191,7 +187,6 @@ static int ftdi_mcu_write(u8 value, volatile void __iomem *_addr)
 		ret = bytes_xfered - 3;
 	}
 
-	mutex_unlock(&ftdi_isa_dev->intf_mutex);
 	return ret;
 }
 
@@ -200,10 +195,10 @@ static int ftdi_mcu_write_multiple(u8 *values, volatile void __iomem *_addr, siz
 	unsigned addr = (unsigned) _addr;
 	int bytes_xfered;
 	int ret = 0;
-	u8 *cmdbuf;
 	int index = count;
 	int j;
 	int actual_sent = 0;
+	u8 *cmdbuf;
 
 	if (!count)
 		return 0;
@@ -211,10 +206,6 @@ static int ftdi_mcu_write_multiple(u8 *values, volatile void __iomem *_addr, siz
 	cmdbuf = kmalloc(1024, GFP_DMA);
 	if (!cmdbuf)
 		return -ENOMEM;
-
-	ret = mutex_lock_interruptible(&ftdi_isa_dev->intf_mutex);
-	if (ret)
-		return ret;
 
 	do {
 		for (j = 0; ((j < 1024) && (index > 0)); index--) {
@@ -242,7 +233,6 @@ static int ftdi_mcu_write_multiple(u8 *values, volatile void __iomem *_addr, siz
 
 out:
 	kfree(cmdbuf);
-	mutex_unlock(&ftdi_isa_dev->intf_mutex);
 	return (ret < 0) ? ret : actual_sent;
 }
 
@@ -252,10 +242,6 @@ static int ftdi_mcu_read(const volatile void __iomem *_addr)
 	int bytes_xfered, buflen;
 	int ret;
 	u8 *cmdbuf;
-
-	ret = mutex_lock_interruptible(&ftdi_isa_dev->intf_mutex);
-	if (ret)
-		return ret;
 
 	cmdbuf = ftdi_isa_dev->xfer_buffer;
 	cmdbuf[0] = READ_EXTENDED;
@@ -295,7 +281,6 @@ static int ftdi_mcu_read(const volatile void __iomem *_addr)
 		ret = cmdbuf[--bytes_xfered]; /* this is the actual value */
 
 out:
-	mutex_unlock(&ftdi_isa_dev->intf_mutex);
 	return ret;
 }
 
