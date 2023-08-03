@@ -160,25 +160,9 @@
 				MX25_PAD_LD1__LD1		0xe0
 				MX25_PAD_LD2__LD2		0xe0
 				MX25_PAD_LD3__LD3		0xe0
-				MX25_PAD_LD4__LD4		0xe0
-				MX25_PAD_LD5__LD5		0xe0
-				MX25_PAD_LD6__LD6		0xe0
-				MX25_PAD_LD7__LD7		0xe0
-				MX25_PAD_LD8__LD8		0xe0
-				MX25_PAD_LD9__LD9		0xe0
-				MX25_PAD_LD10__LD10		0xe0
-				MX25_PAD_LD11__LD11		0xe0
-				MX25_PAD_LD12__LD12		0xe0
-				MX25_PAD_LD13__LD13		0xe0
-				MX25_PAD_LD14__LD14		0xe0
-				MX25_PAD_LD15__LD15		0xe0
-				MX25_PAD_GPIO_E__LD16		0xe0
-				MX25_PAD_GPIO_F__LD17		0xe0
 				MX25_PAD_HSYNC__HSYNC		0xe0
 				MX25_PAD_VSYNC__VSYNC		0xe0
 				MX25_PAD_LSCLK__LSCLK		0xe0
-				MX25_PAD_OE_ACD__OE_ACD		0xe0
-				MX25_PAD_CONTRAST__CONTRAST	0xe0
 			>;
 		};
 
@@ -345,7 +329,7 @@
 
 &lcdc {
 	status = "okay";
-	display = <&ra8875>;
+	display = <&e3lcd>;
 };
 
 / {
@@ -386,27 +370,30 @@
 		};
 	};
 
-	ra8875: display {
-		compatible = "raio,ra8875";
-		status = "disabled";
-
-		bus-width = <8>;
+	e3lcd: display {
 		model = "E3PLUS-DISPLAY";
+		native-mode = <&e3plus_lcd_timings>;
 		bits-per-pixel = <1>;
-		fsl,pcr = <0xf0c88080>; /* non-standard but required */
+		/* TFT = 0 COLOR = 0 PBSIZ = 10 BPIX = 000 PIXPOL = 0(AH) FLMPOL = 0(AH) LPPOL = 0(AH)
+		   CLKPOL = 0(NEGEDGE) OEPOL = 0(AH) SCLKIDLE = 0 END_SEL = 0(LE) SWAP_SEL = 1(1BPP)
+		   REV_VS = 0(NORMAL) ACDSEL = 0(FRM) ACD = 0(FIXME?) SCLKSEL = 1(ALWAYS) SHARP = 0 PCD = 2(???)
+		   0 0 10 | 000 0 | 0 0 0 0 | 0 0 1 0 | 0 000 | 0000 | 1 0 00 | 0010   == 0x00020082 */
+		fsl,pcr = <0x20020082>;
+		bus-width = <4>;
 
 		display-timings {
-			native-timings = <&e3plus_lcd_timings>;
 			e3plus_lcd_timings: 320x240 {
 				hactive = <320>;
 				vactive = <240>;
-				hback-porch = <40>;
-				hfront-porch = <8>;
-				hsync-len = <32>;
-				vback-porch = <6>;
-				vfront-porch = <3>;
-				vsync-len = <6>;
-				clock-frequency = <5000000>;
+				hfront-porch = <9>;	/* "left margin" */
+				hback-porch = <16>;	/* "right margin" */
+				vfront-porch = <7>;	/* "upper margin" */
+				vback-porch = <9>;	/* "lower margin" */
+				hsync-len = <1>;
+				vsync-len = <1>;
+				clock-frequency = <1055555>;
+				hsync-active = <1>;
+				vsync-active = <1>;
 			};
 		};
 	};
