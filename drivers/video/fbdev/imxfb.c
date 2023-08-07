@@ -414,7 +414,7 @@ if (var->bits_per_pixel == 1 && clock_divider) {
 		printk(KERN_WARNING "Must limit pixel clock to %luHz\n",
 				lcd_clk / pcr);
 	}
-	pr_debug("%s(): actual pixel clock rate %lu\n", __func__, lcd_clk / (pcr + 0));
+	pr_debug("%s(): actual pixel clock rate %lu\n", __func__, lcd_clk / (pcr + 1));
 
 	switch (var->bits_per_pixel) {
 	case 32:

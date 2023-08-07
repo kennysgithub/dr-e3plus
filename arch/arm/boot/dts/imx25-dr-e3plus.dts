@@ -374,7 +374,10 @@
 		model = "E3PLUS-DISPLAY";
 		native-mode = <&e3plus_lcd_timings>;
 		bits-per-pixel = <1>;
-		cp-clock-divider = <11>; /* will subtract 1 to form divider */
+		/* for 1bpp: use actual PERCLK3 divide value here */
+		/* PERCLK3 (665MHz) / 11 = 6045454Hz / 4 (bpp) = 1.511MHz PCK */
+		/* resultant freq should go into "clock-frequency" node below */
+		cp-clock-divider = <11>;
 
 		/* TFT = 0 COLOR = 0 PBSIZ = 10(4bpp) BPIX = 000 PIXPOL = 0(AH) FLMPOL = 0(AH) LPPOL = 0(AH)
 		   CLKPOL = 0(NEGEDGE) OEPOL = 0(AH) SCLKIDLE = 0 END_SEL = 0(LE) SWAP_SEL = 1(1BPP)
@@ -395,7 +398,7 @@
 				vback-porch = <1>;	/* "upper margin" */ /* ignored for STN mode */
 				hsync-len = <3>;
 				vsync-len = <5>;
-				clock-frequency = <4608000>;
+				clock-frequency = <6045454>;
 				hsync-active = <1>;
 				vsync-active = <1>;
 				pixelclk-active = <0>;
