@@ -245,6 +245,15 @@ static struct imxfb_rgb def_rgb_8 = {
 	.transp = {.offset = 0, .length = 0,},
 };
 
+static struct imxfb_rgb def_mono_1 = {
+	.red	= {.offset = 0, .length = 1,},
+	.green	= {.offset = 0, .length = 1,},
+	.blue	= {.offset = 0, .length = 1,},
+	.transp = {.offset = 0, .length = 0,},
+};
+
+static u32 clock_divider;
+
 static int imxfb_activate_var(struct fb_var_screeninfo *var,
 		struct fb_info *info);
 
@@ -384,7 +393,12 @@ static int imxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 
 	lcd_clk = clk_get_rate(fbi->clk_per);
 
+	pr_debug("%s(): lcd_clk %ld pixclock %u\n", __func__, lcd_clk, var->pixclock);
 	tmp = var->pixclock * (unsigned long long)lcd_clk;
+
+if (var->bits_per_pixel == 1 && clock_divider) {
+	pcr = clock_divider;
+} else {
 
 	do_div(tmp, 1000000);
 
@@ -392,12 +406,15 @@ static int imxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 		tmp++;
 
 	pcr = (unsigned int)tmp;
+	pr_debug("%s(): pcr div would be %d (0x%X)\n", __func__, pcr - 1, pcr - 1);
+}
 
 	if (--pcr > 0x3F) {
 		pcr = 0x3F;
 		printk(KERN_WARNING "Must limit pixel clock to %luHz\n",
 				lcd_clk / pcr);
 	}
+	pr_debug("%s(): actual pixel clock rate %lu\n", __func__, lcd_clk / (pcr + 0));
 
 	switch (var->bits_per_pixel) {
 	case 32:
@@ -405,12 +422,10 @@ static int imxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 		rgb = &def_rgb_18;
 		break;
 	case 16:
-	default:
 		if (is_imx1_fb(fbi))
 			pcr |= PCR_BPIX_12;
 		else
 			pcr |= PCR_BPIX_16;
-
 		if (imxfb_mode->pcr & PCR_TFT)
 			rgb = &def_rgb_16_tft;
 		else
@@ -420,6 +435,12 @@ static int imxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 		pcr |= PCR_BPIX_8;
 		rgb = &def_rgb_8;
 		break;
+	case 1:
+		pcr |= PCR_BPIX_1;
+		rgb = &def_mono_1;
+		break;
+	default:
+		pr_err("%s(): invalid bpp %d\n", __func__, var->bits_per_pixel);
 	}
 
 	/* add sync polarities */
@@ -436,18 +457,21 @@ static int imxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	 * Copy the RGB parameters for this display
 	 * from the machine specific parameters.
 	 */
-	var->red    = rgb->red;
-	var->green  = rgb->green;
-	var->blue   = rgb->blue;
-	var->transp = rgb->transp;
 
-	pr_debug("RGBT length = %d:%d:%d:%d\n",
-		var->red.length, var->green.length, var->blue.length,
-		var->transp.length);
+	if (rgb) {
+		var->red    = rgb->red;
+		var->green  = rgb->green;
+		var->blue   = rgb->blue;
+		var->transp = rgb->transp;
 
-	pr_debug("RGBT offset = %d:%d:%d:%d\n",
-		var->red.offset, var->green.offset, var->blue.offset,
-		var->transp.offset);
+		pr_debug("RGBT length = %d:%d:%d:%d\n",
+			var->red.length, var->green.length, var->blue.length,
+			var->transp.length);
+
+		pr_debug("RGBT offset = %d:%d:%d:%d\n",
+			var->red.offset, var->green.offset, var->blue.offset,
+			var->transp.offset);
+	}
 
 	return 0;
 }
@@ -461,7 +485,9 @@ static int imxfb_set_par(struct fb_info *info)
 	struct imxfb_info *fbi = info->par;
 	struct fb_var_screeninfo *var = &info->var;
 
-	if (var->bits_per_pixel == 16 || var->bits_per_pixel == 32)
+	if (var->bits_per_pixel == 1)
+		info->fix.visual = FB_VISUAL_MONO10;
+	else if (var->bits_per_pixel == 16 || var->bits_per_pixel == 32)
 		info->fix.visual = FB_VISUAL_TRUECOLOR;
 	else if (!fbi->cmap_static)
 		info->fix.visual = FB_VISUAL_PSEUDOCOLOR;
@@ -586,6 +612,8 @@ static int imxfb_activate_var(struct fb_var_screeninfo *var, struct fb_info *inf
 {
 	struct imxfb_info *fbi = info->par;
 	u32 ymax_mask = is_imx1_fb(fbi) ? YMAX_MASK_IMX1 : YMAX_MASK_IMX21;
+	bool cstn = var->bits_per_pixel == 1;
+	int sub = 0;
 
 	pr_debug("var: xres=%d hslen=%d lm=%d rm=%d\n",
 		var->xres, var->hsync_len,
@@ -622,23 +650,62 @@ static int imxfb_activate_var(struct fb_var_screeninfo *var, struct fb_info *inf
 #endif
 
 	/* physical screen start address	    */
+	pr_debug("%s(): 0x%02X: VPW_VPW(var->xres * var->bits_per_pixel / 8 / 4) %d\n", __func__,
+		LCDC_VPW,
+		VPW_VPW(var->xres * var->bits_per_pixel / 8 / 4));
+
 	writel(VPW_VPW(var->xres * var->bits_per_pixel / 8 / 4),
 		fbi->regs + LCDC_VPW);
 
+	sub = cstn ? 2 : 3;
+
+	pr_debug("%s(): 0x%02X: HCR_H_WIDTH(var->hsync_len - 1) %d, HCR_H_WAIT_1(var->right_margin - 1) %d, HCR_H_WAIT_2(var->left_margin - %d)) %d\n", __func__,
+		LCDC_HCR,
+		var->hsync_len - 1,
+		var->right_margin - 1,
+		sub,
+		var->left_margin - sub);
+
 	writel(HCR_H_WIDTH(var->hsync_len - 1) |
 		HCR_H_WAIT_1(var->right_margin - 1) |
-		HCR_H_WAIT_2(var->left_margin - 3),
+		HCR_H_WAIT_2(var->left_margin - sub),
 		fbi->regs + LCDC_HCR);
 
-	writel(VCR_V_WIDTH(var->vsync_len) |
-		VCR_V_WAIT_1(var->lower_margin) |
-		VCR_V_WAIT_2(var->upper_margin),
-		fbi->regs + LCDC_VCR);
+	if (cstn) {
+		pr_debug("%s(): 0x%02X: VCR_V_WIDTH(var->vsync_len) %d\n", __func__,
+			LCDC_VCR,
+			var->vsync_len);
+
+		writel(VCR_V_WIDTH(var->vsync_len), fbi->regs + LCDC_VCR);
+	} else {
+		pr_debug("%s(): 0x%02X: VCR_V_WIDTH(var->vsync_len) %d, VCR_V_WAIT_1(var->lower_margin) %d, VCR_V_WAIT_2(var->upper_margin) %d\n", __func__,
+			LCDC_VCR,
+			var->vsync_len,
+			var->lower_margin,
+			var->upper_margin);
+
+		writel(VCR_V_WIDTH(var->vsync_len) |
+			VCR_V_WAIT_1(var->lower_margin) |
+			VCR_V_WAIT_2(var->upper_margin),
+			fbi->regs + LCDC_VCR);
+	};
+
+	pr_debug("%s(): 0x%02X: SIZE_XMAX(var->xres) %d, (var->yres & ymax_mask) %d\n", __func__,
+		LCDC_SIZE,
+		var->xres, (var->yres & ymax_mask));
 
 	writel(SIZE_XMAX(var->xres) | (var->yres & ymax_mask),
 			fbi->regs + LCDC_SIZE);
 
+	pr_debug("%s(): 0x%02X: LCDC_PCR 0x%08X\n", __func__,
+		LCDC_PCR,
+		fbi->pcr);
+
 	writel(fbi->pcr, fbi->regs + LCDC_PCR);
+
+	pr_debug("%s(): PWMR 0x%08X LSCR1 0x%08X DMACR 0x%08X LAUSCR 0x%08X\n", __func__,
+		fbi->pwmr, fbi->lscr1, fbi->dmacr, fbi->lauscr);
+
 	if (fbi->pwmr)
 		writel(fbi->pwmr, fbi->regs + LCDC_PWMR);
 	writel(fbi->lscr1, fbi->regs + LCDC_LSCR1);
@@ -649,6 +716,12 @@ static int imxfb_activate_var(struct fb_var_screeninfo *var, struct fb_info *inf
 
 	if (fbi->lauscr)
 		writel(fbi->lauscr, fbi->regs + LCDC_LAUSCR);
+
+#ifdef DEBUG
+	for (sub = 0x0; sub < 0x44; sub += sizeof(u32)) {
+		printk(KERN_INFO "0x%02X:0x%08X ", sub, readl(fbi->regs + sub));
+	}
+#endif
 
 	return 0;
 }
@@ -707,7 +780,11 @@ static int imxfb_init_fbinfo(struct platform_device *pdev)
 		of_property_read_u32(np, "fsl,lscr1", &fbi->lscr1);
 
 		of_property_read_u32(np, "fsl,dmacr", &fbi->dmacr);
+
 	}
+
+	pr_debug("%s(): PWMR 0x%08X LSCR1 0x%08X DMACR 0x%08X LAUSCR 0x%08X\n", __func__,
+		fbi->pwmr, fbi->lscr1, fbi->dmacr, fbi->lauscr);
 
 	return 0;
 }
@@ -745,6 +822,15 @@ static int imxfb_of_read_mode(struct device *dev, struct device_node *np,
 
 	imxfb_mode->bpp = bpp;
 	imxfb_mode->pcr = pcr;
+
+	if (bpp == 1) {
+		ret = of_property_read_u32(np, "cp-clock-divider", &clock_divider);
+		if (ret) {
+			clock_divider = 0;
+		} else {
+			pr_debug("%s(): clock divider of %u from DT\n", __func__, clock_divider);
+		}
+	};
 
 	/*
 	 * fsl,aus-mode is optional
