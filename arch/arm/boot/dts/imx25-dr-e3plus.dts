@@ -378,34 +378,37 @@
 		model = "E3PLUS-DISPLAY";
 		native-mode = <&e3plus_lcd_timings>;
 		bits-per-pixel = <1>;
-		/* for 1bpp: use actual PERCLK3 divide value here */
-		/* PERCLK3 (665MHz) / 11 = 6045454Hz / 4 (bpp) = 1.511MHz PCK */
+
+		/* PERCLK3 (665MHz) / 11 = 6045454Hz / 4 (bus bits) = 1.511MHz PCK */
 		/* resultant freq should go into "clock-frequency" node below */
 		cp-clock-divider = <11>;
 
-		/* TFT = 0 COLOR = 0 PBSIZ = 10(4bpp) BPIX = 000 PIXPOL = 0(AH) FLMPOL = 0(AH) LPPOL = 0(AH)
-		   CLKPOL = 0(NEGEDGE) OEPOL = 0(AH) SCLKIDLE = 0 END_SEL = 0(LE) SWAP_SEL = 1(1BPP)
-		   REV_VS = 0(NORMAL) ACDSEL = 0(FRM) ACD = 0(FIXME?) SCLKSEL = 1(ALWAYS) SHARP = 0 PCD = 0(set by driver)
+		/* TFT(31) = 0 COLOR(30) = 0 PBSIZ(29/28) = 10(4bpp) BPIX(27/25) = 000(1bpp) PIXPOL(24) = 0(AH)
+		   FLMPOL(23) = 0(AH) LPPOL(22) = 0(AH) CLKPOL(21) = 0(NEGEDGE) OEPOL(20) = 0(AH) SCLKIDLE(19) = 0
+		   END_SEL(18) = 0(LE) SWAP_SEL(17) = 1(1BPP) REV_VS(16) = 0(NORMAL) ACDSEL(15) = 0(FRM)
+		   ACD(14/8) = 0(FIXME?) SCLKSEL(7) = 0(NO) SHARP(6) = 0 PCD(5/0) = 0(set by driver)
 
 		   3        2       2         1          1       1      0        0
 		   1        7       3         9          5       1      7        3
-		   0 0 10 | 000 0 | 0 0 0 0 | 0 0 1 0 || 0 000 | 0000 | 1 0 00 | 0000 */
-		fsl,pcr = <0x20020080>;
+		   0-0-10 | 000-0 | 0-0-0-0 | 0-0-1-0 || 0-000 | 0000 | 0-0-00 | 0000 */
+
+		/* 0x53FBC018 */
+		fsl,pcr = <0x20020000>;
 
 		display-timings {
 			e3plus_lcd_timings: 320x240 {
 				hactive = <320>;
 				vactive = <240>;
-				hfront-porch = <3>;	/* "right margin" */ /* -1 */
-				hback-porch = <4>;	/* "left margin" */ /* -2 */
-				vfront-porch = <1>;	/* "lower margin" */ /* ignored for STN mode */
-				vback-porch = <1>;	/* "upper margin" */ /* ignored for STN mode */
+				hfront-porch = <5>;	/* "right margin" */
+				hback-porch = <5>;	/* "left margin" */
+				vfront-porch = <1>;	/* "lower margin" */ /* ignored for Mono STN mode */
+				vback-porch = <1>;	/* "upper margin" */ /* ignored for Mono STN mode */
 				hsync-len = <3>;
-				vsync-len = <5>;
+				vsync-len = <1>;
 				clock-frequency = <6045454>;
 				hsync-active = <1>;
 				vsync-active = <1>;
-				pixelclk-active = <0>;
+				pixelclk-active = <1>;
 
 			};
 		};

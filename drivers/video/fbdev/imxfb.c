@@ -14,6 +14,7 @@
  *	linux-arm-kernel@lists.arm.linux.org.uk
  */
 
+#define DEBUG
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -76,6 +77,8 @@
 #define LCDC_LCHCC	0x14
 
 #define LCDC_PCR	0x18
+#define PCR_TFT         (1 << 31)
+#define PCR_COLOR       (1 << 30)
 
 #define LCDC_HCR	0x1C
 #define HCR_H_WIDTH(x)	(((x) & 0x3f) << 26)
@@ -119,6 +122,11 @@
 
 #define LCDC_LAUSCR	0x80
 #define LAUSCR_AUS_MODE	(1<<31)
+
+#define LCDC_BGLUT	0x800
+#define BGLUT_SIZE	0x400
+#define LCDC_GWLUT	0xC00
+#define GWLUT_SIZE	0x400
 
 /* Used fb-mode. Can be set on kernel command line, therefore file-static. */
 static const char *fb_mode;
@@ -246,9 +254,9 @@ static struct imxfb_rgb def_rgb_8 = {
 };
 
 static struct imxfb_rgb def_mono_1 = {
-	.red	= {.offset = 0, .length = 1,},
-	.green	= {.offset = 0, .length = 1,},
-	.blue	= {.offset = 0, .length = 1,},
+	.red	= {.offset = 0, .length = 0,},
+	.green	= {.offset = 0, .length = 0,},
+	.blue	= {.offset = 0, .length = 0,},
 	.transp = {.offset = 0, .length = 0,},
 };
 
@@ -288,6 +296,14 @@ static int imxfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 	struct imxfb_info *fbi = info->par;
 	unsigned int val;
 	int ret = 1;
+
+	pr_debug("%s(): regno %d red %d green %d blue %d trans %d\n",
+		__func__, regno, red, green, blue, trans);
+	pr_debug("%s(): inverse %s fix.visual %d var.grayscale %s\n",
+		__func__,
+		fbi->cmap_inverse ? "true" : "false",
+		info->fix.visual,
+		info->var.grayscale ? "true" : "false");
 
 	/*
 	 * If inverse mode was selected, invert all the colours
@@ -396,18 +412,18 @@ static int imxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	pr_debug("%s(): lcd_clk %ld pixclock %u\n", __func__, lcd_clk, var->pixclock);
 	tmp = var->pixclock * (unsigned long long)lcd_clk;
 
-if (var->bits_per_pixel == 1 && clock_divider) {
-	pcr = clock_divider;
-} else {
+	if (clock_divider) {
+	      pcr = clock_divider;
+	} else {
 
-	do_div(tmp, 1000000);
+	      do_div(tmp, 1000000);
 
-	if (do_div(tmp, 1000000) > 500000)
-		tmp++;
+	      if (do_div(tmp, 1000000) > 500000)
+		      tmp++;
 
-	pcr = (unsigned int)tmp;
-	pr_debug("%s(): pcr div would be %d (0x%X)\n", __func__, pcr - 1, pcr - 1);
-}
+	      pcr = (unsigned int)tmp;
+	      pr_debug("%s(): pcr div would be %d (0x%X)\n", __func__, pcr - 1, pcr - 1);
+	}
 
 	if (--pcr > 0x3F) {
 		pcr = 0x3F;
@@ -458,20 +474,18 @@ if (var->bits_per_pixel == 1 && clock_divider) {
 	 * from the machine specific parameters.
 	 */
 
-	if (rgb) {
-		var->red    = rgb->red;
-		var->green  = rgb->green;
-		var->blue   = rgb->blue;
-		var->transp = rgb->transp;
+	var->red    = rgb->red;
+	var->green  = rgb->green;
+	var->blue   = rgb->blue;
+	var->transp = rgb->transp;
 
-		pr_debug("RGBT length = %d:%d:%d:%d\n",
-			var->red.length, var->green.length, var->blue.length,
-			var->transp.length);
+	pr_debug("RGBT length = %d:%d:%d:%d\n",
+		var->red.length, var->green.length, var->blue.length,
+		var->transp.length);
 
-		pr_debug("RGBT offset = %d:%d:%d:%d\n",
-			var->red.offset, var->green.offset, var->blue.offset,
-			var->transp.offset);
-	}
+	pr_debug("RGBT offset = %d:%d:%d:%d\n",
+		var->red.offset, var->green.offset, var->blue.offset,
+		var->transp.offset);
 
 	return 0;
 }
@@ -486,7 +500,7 @@ static int imxfb_set_par(struct fb_info *info)
 	struct fb_var_screeninfo *var = &info->var;
 
 	if (var->bits_per_pixel == 1)
-		info->fix.visual = FB_VISUAL_MONO10;
+		info->fix.visual = FB_VISUAL_MONO01;
 	else if (var->bits_per_pixel == 16 || var->bits_per_pixel == 32)
 		info->fix.visual = FB_VISUAL_TRUECOLOR;
 	else if (!fbi->cmap_static)
@@ -612,7 +626,8 @@ static int imxfb_activate_var(struct fb_var_screeninfo *var, struct fb_info *inf
 {
 	struct imxfb_info *fbi = info->par;
 	u32 ymax_mask = is_imx1_fb(fbi) ? YMAX_MASK_IMX1 : YMAX_MASK_IMX21;
-	bool cstn = var->bits_per_pixel == 1;
+	bool cstn;
+	bool is_color;
 	int sub = 0;
 
 	pr_debug("var: xres=%d hslen=%d lm=%d rm=%d\n",
@@ -649,6 +664,10 @@ static int imxfb_activate_var(struct fb_var_screeninfo *var, struct fb_info *inf
 			info->fix.id, var->lower_margin);
 #endif
 
+	cstn = ~(fbi->pcr & PCR_TFT);
+	is_color = fbi->pcr & PCR_COLOR;
+	pr_debug("%s(): panel is %s\n", __func__, cstn ? "(C/F)STN" : "TFT");
+
 	/* physical screen start address	    */
 	pr_debug("%s(): 0x%02X: VPW_VPW(var->xres * var->bits_per_pixel / 8 / 4) %d\n", __func__,
 		LCDC_VPW,
@@ -671,7 +690,7 @@ static int imxfb_activate_var(struct fb_var_screeninfo *var, struct fb_info *inf
 		HCR_H_WAIT_2(var->left_margin - sub),
 		fbi->regs + LCDC_HCR);
 
-	if (cstn) {
+	if (cstn && !is_color) {
 		pr_debug("%s(): 0x%02X: VCR_V_WIDTH(var->vsync_len) %d\n", __func__,
 			LCDC_VCR,
 			var->vsync_len);
@@ -719,7 +738,7 @@ static int imxfb_activate_var(struct fb_var_screeninfo *var, struct fb_info *inf
 
 #ifdef DEBUG
 	for (sub = 0x0; sub < 0x44; sub += sizeof(u32)) {
-		printk(KERN_INFO "0x%02X:0x%08X ", sub, readl(fbi->regs + sub));
+		printk(KERN_INFO "0x%08X:0x%08X ", sub + 0x53FBC000, readl(fbi->regs + sub));
 	}
 #endif
 
@@ -783,9 +802,6 @@ static int imxfb_init_fbinfo(struct platform_device *pdev)
 
 	}
 
-	pr_debug("%s(): PWMR 0x%08X LSCR1 0x%08X DMACR 0x%08X LAUSCR 0x%08X\n", __func__,
-		fbi->pwmr, fbi->lscr1, fbi->dmacr, fbi->lauscr);
-
 	return 0;
 }
 
@@ -823,14 +839,12 @@ static int imxfb_of_read_mode(struct device *dev, struct device_node *np,
 	imxfb_mode->bpp = bpp;
 	imxfb_mode->pcr = pcr;
 
-	if (bpp == 1) {
-		ret = of_property_read_u32(np, "cp-clock-divider", &clock_divider);
-		if (ret) {
-			clock_divider = 0;
-		} else {
-			pr_debug("%s(): clock divider of %u from DT\n", __func__, clock_divider);
-		}
-	};
+	ret = of_property_read_u32(np, "cp-clock-divider", &clock_divider);
+	if (ret) {
+		clock_divider = 0;
+	} else {
+		pr_debug("%s(): clock divider of %u from DT\n", __func__, clock_divider);
+	}
 
 	/*
 	 * fsl,aus-mode is optional
