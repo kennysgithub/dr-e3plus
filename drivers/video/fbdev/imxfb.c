@@ -253,10 +253,17 @@ static struct imxfb_rgb def_rgb_8 = {
 	.transp = {.offset = 0, .length = 0,},
 };
 
+static struct imxfb_rgb def_mono_4 = {
+	.red	= {.offset = 0, .length = 1,},
+	.green	= {.offset = 0, .length = 1,},
+	.blue	= {.offset = 0, .length = 1,},
+	.transp = {.offset = 0, .length = 0,},
+};
+
 static struct imxfb_rgb def_mono_1 = {
-	.red	= {.offset = 0, .length = 0,},
-	.green	= {.offset = 0, .length = 0,},
-	.blue	= {.offset = 0, .length = 0,},
+	.red	= {.offset = 0, .length = 1,},
+	.green	= {.offset = 0, .length = 1,},
+	.blue	= {.offset = 0, .length = 1,},
 	.transp = {.offset = 0, .length = 0,},
 };
 
@@ -367,6 +374,16 @@ static const struct imx_fb_videomode *imxfb_find_mode(struct imxfb_info *fbi)
 	return NULL;
 }
 
+static void define_4bpp_palette(struct fb_info *info)
+{
+	struct imxfb_info *fb = info->par;
+	u32 lut = LCDC_BGLUT;
+	int i;
+
+	for (i = 0; i < 16; i++, lut += 4)
+		writel(i, fb->regs + lut);
+}
+
 /*
  *  imxfb_check_var():
  *    Round up in the following order: bits_per_pixel, xres,
@@ -451,6 +468,10 @@ static int imxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 		pcr |= PCR_BPIX_8;
 		rgb = &def_rgb_8;
 		break;
+	case 4:
+		pcr |= PCR_BPIX_4;
+		rgb = &def_mono_4;
+		break;
 	case 1:
 		pcr |= PCR_BPIX_1;
 		rgb = &def_mono_1;
@@ -486,6 +507,9 @@ static int imxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	pr_debug("RGBT offset = %d:%d:%d:%d\n",
 		var->red.offset, var->green.offset, var->blue.offset,
 		var->transp.offset);
+
+	if (var->bits_per_pixel == 4)
+		define_4bpp_palette(info);
 
 	return 0;
 }

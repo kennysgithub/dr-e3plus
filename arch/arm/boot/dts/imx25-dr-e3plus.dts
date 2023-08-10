@@ -377,23 +377,24 @@
 	e3lcd: display {
 		model = "E3PLUS-DISPLAY";
 		native-mode = <&e3plus_lcd_timings>;
-		bits-per-pixel = <1>;
+		bits-per-pixel = <4>;
+		cmap-greyscale;
 
 		/* PERCLK3 (665MHz) / 11 = 6045454Hz / 4 (bus bits) = 1.511MHz PCK */
 		/* resultant freq should go into "clock-frequency" node below */
-		cp-clock-divider = <11>;
+		/* cp-clock-divider = <11>; */
 
-		/* TFT(31) = 0 COLOR(30) = 0 PBSIZ(29/28) = 10(4bpp) BPIX(27/25) = 000(1bpp) PIXPOL(24) = 0(AH)
+		/* TFT(31) = 0 COLOR(30) = 0 PBSIZ(29/28) = 10(4bpp) BPIX(27/25) = 010(4bpp) PIXPOL(24) = 0(AH)
 		   FLMPOL(23) = 0(AH) LPPOL(22) = 0(AH) CLKPOL(21) = 0(NEGEDGE) OEPOL(20) = 0(AH) SCLKIDLE(19) = 0
 		   END_SEL(18) = 0(LE) SWAP_SEL(17) = 1(1BPP) REV_VS(16) = 0(NORMAL) ACDSEL(15) = 0(FRM)
 		   ACD(14/8) = 0(FIXME?) SCLKSEL(7) = 0(NO) SHARP(6) = 0 PCD(5/0) = 0(set by driver)
 
 		   3        2       2         1          1       1      0        0
 		   1        7       3         9          5       1      7        3
-		   0-0-10 | 000-0 | 0-0-0-0 | 0-0-1-0 || 0-000 | 0000 | 0-0-00 | 0000 */
+		   0-0-10 | 010-0 | 0-0-0-0 | 0-0-1-0 || 0-000 | 0000 | 0-0-00 | 0000 */
 
 		/* 0x53FBC018 */
-		fsl,pcr = <0x20020000>;
+		fsl,pcr = <0x24020000>;
 
 		display-timings {
 			e3plus_lcd_timings: 320x240 {
