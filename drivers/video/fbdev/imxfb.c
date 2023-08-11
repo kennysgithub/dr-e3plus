@@ -14,7 +14,6 @@
  *	linux-arm-kernel@lists.arm.linux.org.uk
  */
 
-#define DEBUG
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -175,6 +174,7 @@ struct imxfb_info {
 	u_int			dmacr;
 	bool			cmap_inverse;
 	bool			cmap_static;
+	bool			cmap_forcemono;
 
 	struct imx_fb_videomode *mode;
 	int			num_modes;
@@ -523,7 +523,7 @@ static int imxfb_set_par(struct fb_info *info)
 	struct imxfb_info *fbi = info->par;
 	struct fb_var_screeninfo *var = &info->var;
 
-	if (var->bits_per_pixel == 1)
+	if (var->bits_per_pixel == 1 || fbi->cmap_forcemono)
 		info->fix.visual = FB_VISUAL_MONO01;
 	else if (var->bits_per_pixel == 16 || var->bits_per_pixel == 32)
 		info->fix.visual = FB_VISUAL_TRUECOLOR;
@@ -815,6 +815,7 @@ static int imxfb_init_fbinfo(struct platform_device *pdev)
 						"cmap-greyscale");
 		fbi->cmap_inverse = of_property_read_bool(np, "cmap-inverse");
 		fbi->cmap_static = of_property_read_bool(np, "cmap-static");
+		fbi->cmap_forcemono = of_property_read_bool(np, "cmap-forcemono");
 
 		fbi->lscr1 = IMXFB_LSCR1_DEFAULT;
 

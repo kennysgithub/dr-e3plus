@@ -378,9 +378,9 @@
 		model = "E3PLUS-DISPLAY";
 		native-mode = <&e3plus_lcd_timings>;
 		bits-per-pixel = <4>;
-		cmap-greyscale;
+		cmap-forcemono;
 
-		/* PERCLK3 (665MHz) / 11 = 6045454Hz / 4 (bus bits) = 1.511MHz PCK */
+		/* PERCLK3 (66.5MHz) / 11 = 6045454Hz / 4 (bus bits) = 1.511MHz PCK */
 		/* resultant freq should go into "clock-frequency" node below */
 		/* cp-clock-divider = <11>; */
 
