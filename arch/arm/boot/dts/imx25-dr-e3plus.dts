@@ -430,7 +430,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_isa_int>;
 		compatible = "ns16550", "ns16550a";
-		clock-frequency = <1000000>; /* FIXME! */
+		clock-frequency = <1843200>; /* FIXME! */
 		interrupt-parent = <&gpio1>;
 
 		serial0@0x2000 {
