@@ -417,37 +417,10 @@
 
 	cuio {
 		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_cuio>;
+		pinctrl-0 = <&pinctrl_cuio>, <&pinctrl_isa_int>;
 		compatible = "dynamicratings,cuio";
 		isa-reset-gpios = <&gpio2 20 GPIO_ACTIVE_HIGH>;
 		isa-reset-msec = <100>;
 	};
 
-	of_serial {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_isa_int>;
-		compatible = "ns16550", "ns16550a";
-		clock-frequency = <1843200>; /* FIXME! */
-		interrupt-parent = <&gpio1>;
-
-		serial0@0x2000 {
-			reg = <0x2000 0x20>;
-			interrupts = <6 GPIO_ACTIVE_HIGH>;
-		};
-
-		serial1@0x2020 {
-			reg = <0x2020 0x20>;
-			interrupts = <31 GPIO_ACTIVE_HIGH>;
-		};
-
-			/*
-			<30 GPIO_ACTIVE_HIGH>,
-			<29 GPIO_ACTIVE_HIGH>,
-			<28 GPIO_ACTIVE_HIGH>,
-			<27 GPIO_ACTIVE_HIGH>;
-			*/
-	};
 };

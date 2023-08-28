@@ -7,3 +7,5 @@ EXTRA_CFLAGS += -DCU_BUILD_ID="\"$(CU_BUILD_ID)\""
 obj-$(CONFIG_DR_CUIO)		+= cuio.o
 
 obj-$(CONFIG_DR_FTDI_ISA)	+= ftdi_isa.o
+
+obj-$(CONFIG_DR_XTM_SERIAL)	+= xtm-serial.o

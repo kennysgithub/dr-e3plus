@@ -11,3 +11,11 @@ config DR_FTDI_ISA
 	default y
 	help
 	  This driver puts the FTDI 2232H into the ISA-bus-host mode
+
+config DR_XTM_SERIAL
+	depends on DR_E3PLUS
+	tristate "Support for serial modules via the FTDI-ISA bus"
+	default y
+	help
+	  This driver supports the 8250/16550A-style ports on the
+	  other side of the ISA bus controlled by the FTDI_ISA driver

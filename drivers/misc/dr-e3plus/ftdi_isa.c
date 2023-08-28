@@ -31,7 +31,6 @@ struct ftdi_isa_device {
 	struct usb_interface *interface;
 	struct usb_host_interface *iface_desc;
 	int opened;
-	struct mutex intf_mutex;
 	u8 bulk_in_ep;
 	u8 bulk_out_ep;
 	u8 *xfer_buffer;
@@ -408,7 +407,6 @@ static int ftdi_isa_probe(struct usb_interface *interface,
 	dev->bulk_in_ep = iep->bEndpointAddress;
 	dev->bulk_out_ep = oep->bEndpointAddress;
 
-	mutex_init(&dev->intf_mutex);
 	dev->interface = interface;
 	dev->udev = usb_get_dev(udev);
 
