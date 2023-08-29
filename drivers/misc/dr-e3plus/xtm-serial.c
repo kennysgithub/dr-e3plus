@@ -54,7 +54,6 @@ static struct tty_driver *xtm_serial_driver;
 
 struct xtm_serial_port {
 	struct tty_port		tty_port;
-	struct device		*tty_device;
 	unsigned		custom_divisor;
 	unsigned		baud;
 	/* fake; only needed for quirks, "io" and ident */
@@ -183,7 +182,7 @@ static int xtm_serial_start_port(struct xtm_serial_port *xsp)
 	serial_outp(up, UART_IER, 0);
 
 	if ((lsr & UART_LSR_TEMT) && (iinfo & UART_IIR_NO_INT)) {
-		printk(KERN_WARNING "%s(): no IRQ on port %d, disabling\n",
+		pr_err("%s(): no IRQ on port %d, disabling\n",
 			__func__, xsp->tty_port.tty->index);
 		return -ENODEV;
 	}
@@ -220,44 +219,6 @@ static void xtm_serial_shutdown(struct xtm_serial_port *xsp)
 	serial_inp(up, UART_RX);
 }
 
-/*
- * This is a quickie test to see how big the FIFO is.
- * It doesn't work at all the time, more's the pity.
- */
-static int size_fifo(struct uart_8250_port *up)
-{
-	unsigned char old_fcr, old_mcr, old_dll, old_dlm, old_lcr;
-	int count;
-
-	old_lcr = serial_inp(up, UART_LCR);
-	serial_outp(up, UART_LCR, 0);
-	old_fcr = serial_inp(up, UART_FCR);
-	old_mcr = serial_inp(up, UART_MCR);
-	serial_outp(up, UART_FCR, UART_FCR_ENABLE_FIFO |
-		    UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT);
-	serial_outp(up, UART_MCR, UART_MCR_LOOP);
-	serial_outp(up, UART_LCR, UART_LCR_DLAB);
-	old_dll = serial_inp(up, UART_DLL);
-	old_dlm = serial_inp(up, UART_DLM);
-	serial_outp(up, UART_DLL, 0x01);
-	serial_outp(up, UART_DLM, 0x00);
-	serial_outp(up, UART_LCR, 0x03);
-	for (count = 0; count < 256; count++)
-		serial_outp(up, UART_TX, count);
-	mdelay(20);/* FIXME - schedule_timeout */
-	for (count = 0; (serial_inp(up, UART_LSR) & UART_LSR_DR) &&
-	     (count < 256); count++)
-		serial_inp(up, UART_RX);
-	serial_outp(up, UART_FCR, old_fcr);
-	serial_outp(up, UART_MCR, old_mcr);
-	serial_outp(up, UART_LCR, UART_LCR_DLAB);
-	serial_outp(up, UART_DLL, old_dll);
-	serial_outp(up, UART_DLM, old_dlm);
-	serial_outp(up, UART_LCR, old_lcr);
-
-	return count;
-}
-
 static int xtm_serial_open(struct tty_struct *tty, struct file *filp)
 {
 	unsigned int line = tty->index;
@@ -287,7 +248,7 @@ static void xtm_serial_close(struct tty_struct *tty, struct file *filp)
 	struct xtm_serial_device *xsd = tty->driver->driver_state;
 	struct xtm_serial_port *xsp = &xsd->xtm_ports[line];
 
-	pr_debug("%s(): %d\n", __func__, __LINE__);
+	dev_dbg(tty->dev, "%s(): %d\n", __func__, __LINE__);
 
 	xsd->opened_ports &= ~(1 << line);
 	xtm_serial_shutdown(xsp);
@@ -297,7 +258,7 @@ static void xtm_serial_close(struct tty_struct *tty, struct file *filp)
 
 static void xtm_serial_hangup(struct tty_struct *tty)
 {
-	pr_debug("%s(): %d\n", __func__, __LINE__);
+	dev_dbg(tty->dev, "%s(): %d\n", __func__, __LINE__);
 	tty_port_hangup(tty->port);
 }
 
@@ -310,7 +271,7 @@ static int xtm_serial_write(struct tty_struct *tty, const unsigned char *buf,
 	struct uart_8250_port *up = (struct uart_8250_port *) &xsp->up;
 	int ret;
 
-	pr_debug("%s(): %d line %d count %d\n", __func__, __LINE__,
+	dev_dbg(tty->dev, "%s(): %d line %d count %d\n", __func__, __LINE__,
 		line, count);
 
 	ret = ftdi_isa_write_multiple((u8 *)buf, up->port.membase + UART_TX, count);
@@ -319,7 +280,7 @@ static int xtm_serial_write(struct tty_struct *tty, const unsigned char *buf,
 
 static int xtm_serial_write_room(struct tty_struct *tty)
 {
-	pr_debug("%s(): %d\n", __func__, __LINE__);
+	dev_dbg(tty->dev, "%s(): %d\n", __func__, __LINE__);
 	return 8;
 }
 
@@ -335,7 +296,7 @@ static void xtm_set_termios(struct tty_struct *tty, struct ktermios *old_termios
 	unsigned int baud, quot;
 	struct ktermios *termios = &tty->termios;
 
-	pr_debug("%s(): %d\n", __func__, __LINE__);
+	dev_dbg(tty->dev, "%s(): %d\n", __func__, __LINE__);
 
 	switch (termios->c_cflag & CSIZE) {
 	case CS5:
@@ -366,7 +327,7 @@ static void xtm_set_termios(struct tty_struct *tty, struct ktermios *old_termios
 	baud = uart_get_baud_rate(&up->port, termios, old_termios, 0, up->port.uartclk/16);
 	quot = xtm_get_divisor(&up->port, baud);
 
-	pr_debug("%s: baud:%d, quot:%d\n", __func__, baud, quot);
+	dev_dbg(tty->dev, "%s: baud:%d, quot:%d\n", __func__, baud, quot);
 
 	/*
 	 * Oxford Semi 952 rev B workaround
@@ -483,6 +444,7 @@ static void receive_chars(struct uart_8250_port *up, int *status)
 {
 	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
 	struct tty_port *ttyp = &xsp->tty_port;
+	struct device *dev = ttyp->tty->dev;
 	unsigned char ch, lsr = *status;
 	int cnt = 256;
 	char tty_flag;
@@ -503,7 +465,7 @@ static void receive_chars(struct uart_8250_port *up, int *status)
 			if (lsr & UART_LSR_BI) {
 				lsr &= ~(UART_LSR_FE | UART_LSR_PE);
 				up->port.icount.brk++;
-				printk(KERN_INFO "%s(): BREAK recv\n", __func__);
+				dev_info(dev, "%s(): BREAK recv\n", __func__);
 				goto ignore_char;
 			} else if (lsr & UART_LSR_PE) {
 				up->port.icount.parity++;
@@ -527,11 +489,11 @@ static void receive_chars(struct uart_8250_port *up, int *status)
 
 		if (!tty_buffer_request_room(ttyp, 1))
 			tty_flip_buffer_push(ttyp);
-		pr_debug("%s(): char %c tty_flag 0x%02X\n", __func__, ch, tty_flag);
+		dev_dbg(dev, "%s(): char %c tty_flag 0x%02X\n", __func__, ch, tty_flag);
 		ret = tty_insert_flip_char(ttyp, ch, tty_flag);
 		if (unlikely(!ret)) {
 			up->port.icount.buf_overrun++;
-			printk(KERN_WARNING "%s(): couldn't insert char\n", __func__);
+			dev_warn(dev, "%s(): couldn't insert char\n", __func__);
 		}
 
 ignore_char:
@@ -545,64 +507,20 @@ ignore_char:
 	return;
 }
 
-#if 1
 static void transmit_chars(struct uart_8250_port *up)
 {
 	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
 	struct tty_port *ttyp = &xsp->tty_port;
+	struct device *dev = ttyp->tty->dev;
 
-	pr_debug("%s():\n", __func__);
+	dev_dbg(dev, "%s():\n", __func__);
 }
-#else
-static void transmit_chars(struct uart_8250_port *up)
-{
-	struct circ_buf *xmit = &up->port.state->xmit;
-	int count;
-
-	if (up->port.x_char) {
-		serial_outp(up, UART_TX, up->port.x_char);
-		up->port.icount.tx++;
-		up->port.x_char = 0;
-		return;
-	}
-
-	if (uart_tx_stopped(&up->port)) {
-		// xtm8250_stop_tx(&up->port);
-		printk(KERN_INFO "%s(): uart_tx_stopped\n", __func__);
-		return;
-	}
-
-	if (uart_circ_empty(xmit)) {
-		// __stop_tx(up);
-		printk(KERN_INFO "%s(): uart_circ_empty\n", __func__);
-		return;
-	}
-
-	count = up->tx_loadsz;
-	do {
-		serial_out(up, UART_TX, xmit->buf[xmit->tail]);
-		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
-		up->port.icount.tx++;
-		if (uart_circ_empty(xmit))
-			break;
-	} while (--count > 0);
-
-	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
-		uart_write_wakeup(&up->port);
-
-	if (uart_circ_empty(xmit)) {
-		// __stop_tx(up);
-		printk(KERN_INFO "%s(): uart_circ_empty\n", __func__);
-		return;
-	}
-
-}
-#endif
 
 static unsigned int check_modem_status(struct uart_8250_port *up)
 {
 	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
 	struct tty_port *ttyp = &xsp->tty_port;
+	struct device *dev = ttyp->tty->dev;
 	unsigned int status = serial_inp(up, UART_MSR);
 
 	status |= up->msr_saved_flags;
@@ -616,10 +534,10 @@ static unsigned int check_modem_status(struct uart_8250_port *up)
 			up->port.icount.dsr++;
 		if (status & UART_MSR_DDCD)
 			//uart_handle_dcd_change(&up->port, status & UART_MSR_DCD);
-			printk(KERN_INFO "%s(): UART_MSR_DDCD\n", __func__);
+			dev_info(dev, "%s(): UART_MSR_DDCD\n", __func__);
 		if (status & UART_MSR_DCTS)
 			//uart_handle_cts_change(&up->port, status & UART_MSR_CTS);
-			printk(KERN_INFO "%s(): UART_MSR_DCTS\n", __func__);
+			dev_info(dev, "%s(): UART_MSR_DCTS\n", __func__);
 	}
 	return status;
 }
@@ -688,7 +606,7 @@ static int __init xtm_serial_init(void)
 	mutex_init(&priv->io_mutex);
 	priv->irq_wq = create_workqueue("xtm-irq-wq");
 	if (!priv->irq_wq) {
-		printk(KERN_ERR "%s(): can't create workqueue\n", __func__);
+		pr_err("%s(): can't create workqueue\n", __func__);
 		return -EBUSY;
 	};
 	INIT_WORK(&priv->irq_work, xtm_irq_worker);
@@ -698,14 +616,14 @@ static int __init xtm_serial_init(void)
 
 	ret = request_irq(priv->irq0, xtm_serial_irqh, IRQF_TRIGGER_RISING,  "xtm_serial_0", priv);
 	if (ret) {
-		printk(KERN_ERR "%s(): can't get bank 0 IRQ: %d\n", __func__, ret);
+		pr_err("%s(): can't get bank 0 IRQ: %d\n", __func__, ret);
 		put_tty_driver(driver);
 		return ret;
 	}
 
 	ret = request_irq(priv->irq1, xtm_serial_irqh, IRQF_TRIGGER_RISING,  "xtm_serial_1", priv);
 	if (ret) {
-		printk(KERN_ERR "%s(): can't get bank 1 IRQ: %d\n", __func__, ret);
+		pr_err("%s(): can't get bank 1 IRQ: %d\n", __func__, ret);
 		put_tty_driver(driver);
 		free_irq(priv->irq0, priv);
 		return ret;
@@ -740,7 +658,7 @@ static int __init xtm_serial_init(void)
 	}
 
 	xtm_serial_driver = driver;
-	printk(KERN_INFO "E3Plus Serial Ports Driver registered\n");
+	pr_info("E3Plus Serial Ports Driver registered\n");
 
 	return 0;
 }
