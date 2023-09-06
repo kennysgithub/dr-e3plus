@@ -524,7 +524,7 @@ static int imxfb_set_par(struct fb_info *info)
 	struct fb_var_screeninfo *var = &info->var;
 
 	if (var->bits_per_pixel == 1 || fbi->cmap_forcemono)
-		info->fix.visual = FB_VISUAL_MONO01;
+		info->fix.visual = FB_VISUAL_MONO10;
 	else if (var->bits_per_pixel == 16 || var->bits_per_pixel == 32)
 		info->fix.visual = FB_VISUAL_TRUECOLOR;
 	else if (!fbi->cmap_static)

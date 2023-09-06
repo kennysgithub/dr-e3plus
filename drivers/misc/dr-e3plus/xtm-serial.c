@@ -26,8 +26,7 @@
 #define BANK_1_IRQ_GPIO		(30)
 #define NUM_SERIAL_PORTS	(8)
 
-/* from xtm8250.[ch] */
-#define XTM_UART_CLOCK             (921600 * 16)
+#define XTM_UART_CLOCK             (1843200)
 
 struct xtm_serial_port_mappings {
 	u16 port_base;
