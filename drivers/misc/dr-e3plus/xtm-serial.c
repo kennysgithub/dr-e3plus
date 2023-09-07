@@ -45,7 +45,6 @@ static const struct xtm_serial_port_mappings port_maps[NUM_SERIAL_PORTS] = {
 };
 
 #define PORT_TO_ADDR(port) (unsigned char *)((port_maps[port].port_base) | 0L)
-#define PORT_TO_IRQ(port)  (port_maps[port].irqno)
 
 static const struct tty_port_operations xtm_serial_port_ops;
 
@@ -232,13 +231,18 @@ static int xtm_serial_open(struct tty_struct *tty, struct file *filp)
 
 	pr_debug("%s(): line %d\n", __func__, line);
 
-	xsd->opened_ports |= (1 << line);
-	ret = xtm_serial_start_port(xsp);
-
+	ret = tty_port_open(&xsp->tty_port, tty, filp);
 	if (ret)
 		return ret;
 
-	return tty_port_open(&xsp->tty_port, tty, filp);
+	mutex_init(&xsp->port_mutex);
+
+	ret = xtm_serial_start_port(xsp);
+	if (ret)
+		return ret;
+
+	xsd->opened_ports |= (1 << line);
+	return 0;
 }
 
 static void xtm_serial_close(struct tty_struct *tty, struct file *filp)
@@ -253,6 +257,7 @@ static void xtm_serial_close(struct tty_struct *tty, struct file *filp)
 	xtm_serial_shutdown(xsp);
 
 	tty_port_close(tty->port, tty, filp);
+	mutex_destroy(&xsp->port_mutex);
 }
 
 static void xtm_serial_hangup(struct tty_struct *tty)
@@ -269,18 +274,25 @@ static int xtm_serial_write(struct tty_struct *tty, const unsigned char *buf,
 	struct xtm_serial_port *xsp = &xsd->xtm_ports[line];
 	struct uart_8250_port *up = (struct uart_8250_port *) &xsp->up;
 	int ret;
+	unsigned char *p = buf;
 
 	dev_dbg(tty->dev, "%s(): %d line %d count %d\n", __func__, __LINE__,
 		line, count);
 
+	/*
 	ret = ftdi_isa_write_multiple((u8 *)buf, up->port.membase + UART_TX, count);
+	*/
+	ret = count;
+	while(count--)
+		serial_outp(up, UART_TX, *p++);
 	return ret;
 }
 
 static int xtm_serial_write_room(struct tty_struct *tty)
 {
 	dev_dbg(tty->dev, "%s(): %d\n", __func__, __LINE__);
-	return 8;
+	// FIXME: the problem is there's no way to determine the FIFO depth :(
+	return 4;
 }
 
 static void xtm_set_termios(struct tty_struct *tty, struct ktermios *old_termios)
@@ -512,7 +524,7 @@ static void transmit_chars(struct uart_8250_port *up)
 	struct tty_port *ttyp = &xsp->tty_port;
 	struct device *dev = ttyp->tty->dev;
 
-	dev_dbg(dev, "%s():\n", __func__);
+	dev_info(dev, "%s():\n", __func__);
 }
 
 static unsigned int check_modem_status(struct uart_8250_port *up)
@@ -531,12 +543,14 @@ static unsigned int check_modem_status(struct uart_8250_port *up)
 			up->port.icount.rng++;
 		if (status & UART_MSR_DDSR)
 			up->port.icount.dsr++;
-		if (status & UART_MSR_DDCD)
-			//uart_handle_dcd_change(&up->port, status & UART_MSR_DCD);
+		if (status & UART_MSR_DDCD) {
 			dev_info(dev, "%s(): UART_MSR_DDCD\n", __func__);
-		if (status & UART_MSR_DCTS)
-			//uart_handle_cts_change(&up->port, status & UART_MSR_CTS);
+			uart_handle_dcd_change(&up->port, status & UART_MSR_DCD);
+		}
+		if (status & UART_MSR_DCTS) {
 			dev_info(dev, "%s(): UART_MSR_DCTS\n", __func__);
+			uart_handle_cts_change(&up->port, status & UART_MSR_CTS);
+		}
 	}
 	return status;
 }
@@ -603,7 +617,7 @@ static int __init xtm_serial_init(void)
 		return PTR_ERR(driver);
 
 	mutex_init(&priv->io_mutex);
-	priv->irq_wq = create_workqueue("xtm-irq-wq");
+	priv->irq_wq = create_singlethread_workqueue("xtm-irq-wq");
 	if (!priv->irq_wq) {
 		pr_err("%s(): can't create workqueue\n", __func__);
 		return -EBUSY;
@@ -612,21 +626,6 @@ static int __init xtm_serial_init(void)
 
 	priv->irq0 = gpio_to_irq(BANK_0_IRQ_GPIO);
 	priv->irq1 = gpio_to_irq(BANK_1_IRQ_GPIO);
-
-	ret = request_irq(priv->irq0, xtm_serial_irqh, IRQF_TRIGGER_RISING,  "xtm_serial_0", priv);
-	if (ret) {
-		pr_err("%s(): can't get bank 0 IRQ: %d\n", __func__, ret);
-		put_tty_driver(driver);
-		return ret;
-	}
-
-	ret = request_irq(priv->irq1, xtm_serial_irqh, IRQF_TRIGGER_RISING,  "xtm_serial_1", priv);
-	if (ret) {
-		pr_err("%s(): can't get bank 1 IRQ: %d\n", __func__, ret);
-		put_tty_driver(driver);
-		free_irq(priv->irq0, priv);
-		return ret;
-	}
 
 	driver->driver_name = "xtm_serial";
 	driver->name = "serial";
@@ -646,20 +645,40 @@ static int __init xtm_serial_init(void)
 		tty_port_link_device(ttyp, driver, idx);
 	};
 
+	ret = request_irq(priv->irq0, xtm_serial_irqh, IRQF_TRIGGER_RISING,  "xtm_serial_0", priv);
+	if (ret) {
+		pr_err("%s(): can't get bank 0 IRQ: %d\n", __func__, ret);
+		put_tty_driver(driver);
+		goto dreg_ports;
+	}
+
+	ret = request_irq(priv->irq1, xtm_serial_irqh, IRQF_TRIGGER_RISING,  "xtm_serial_1", priv);
+	if (ret) {
+		pr_err("%s(): can't get bank 1 IRQ: %d\n", __func__, ret);
+		put_tty_driver(driver);
+		goto dreg_ports;
+	}
+
 	ret = tty_register_driver(driver);
 	if (ret < 0) {
+dreg_ports:
 		put_tty_driver(driver);
 		for (idx = 0; idx < NUM_SERIAL_PORTS; idx++)
 			tty_port_destroy(&priv->xtm_ports[idx].tty_port);
-		free_irq(priv->irq0, priv);
-		free_irq(priv->irq1, priv);
-		return ret;
+		goto out_irqs;
 	}
 
 	xtm_serial_driver = driver;
 	pr_info("E3Plus Serial Ports Driver registered\n");
 
 	return 0;
+
+out_irqs:
+	free_irq(priv->irq1, priv);
+	free_irq(priv->irq0, priv);
+	kfree(priv);
+	return ret;
+
 }
 
 static void __exit xtm_serial_exit(void)
@@ -673,6 +692,7 @@ static void __exit xtm_serial_exit(void)
 	free_irq(priv->irq0, priv);
 	free_irq(priv->irq1, priv);
 	tty_unregister_driver(xtm_serial_driver);
+	kfree(priv);
 }
 
 module_init(xtm_serial_init);
