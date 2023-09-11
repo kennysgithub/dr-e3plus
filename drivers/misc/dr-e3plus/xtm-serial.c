@@ -4,6 +4,7 @@
  *
  */
 
+#define DEBUG
 #include <linux/console.h>
 #include <linux/module.h>
 #include <linux/tty.h>
@@ -15,10 +16,12 @@
 #include <linux/serial_8250.h>
 #include <linux/delay.h>
 #include <linux/tty_flip.h>
+#include <linux/sched/signal.h>
 
 #include "../../tty/serial/8250/8250.h"
 
 #include "ftdi_isa.h"
+#include "xtm-serial-modbus.h"
 
 /* MX25_PAD_CSI_D5__GPIO_1_30              0x80000000 */     /* ISA IRQ 6 */
 /* MX25_PAD_CSI_D4__GPIO_1_29              0x80000000 */     /* ISA IR5 5 */
@@ -128,6 +131,56 @@ static unsigned int xtm_get_divisor(struct uart_port *port, unsigned int baud)
 	return quot;
 }
 
+static unsigned int check_modem_status(struct uart_8250_port *up)
+{
+	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
+	struct tty_port *ttyp = &xsp->tty_port;
+	struct device *dev = ttyp->tty->dev;
+	unsigned int status = serial_inp(up, UART_MSR);
+
+	dev_dbg(dev, "%s():\n", __func__);
+
+	status |= up->msr_saved_flags;
+	up->msr_saved_flags = 0;
+
+	if (status & UART_MSR_ANY_DELTA && up->ier & UART_IER_MSI &&
+	    up->port.state != NULL) {
+		if (status & UART_MSR_TERI)
+			up->port.icount.rng++;
+		if (status & UART_MSR_DDSR)
+			up->port.icount.dsr++;
+		if (status & UART_MSR_DDCD) {
+			dev_info(dev, "%s(): UART_MSR_DDCD\n", __func__);
+			uart_handle_dcd_change(&up->port, status & UART_MSR_DCD);
+		}
+		if (status & UART_MSR_DCTS) {
+			dev_info(dev, "%s(): UART_MSR_DCTS\n", __func__);
+			uart_handle_cts_change(&up->port, status & UART_MSR_CTS);
+		}
+	}
+	return status;
+}
+
+static unsigned int xtm_get_mctrl(struct uart_port *port)
+{
+	struct uart_8250_port *up = (struct uart_8250_port *)port;
+	unsigned int status;
+	unsigned int ret = 0;
+
+	status = check_modem_status(up);
+
+	if (status & UART_MSR_DCD)
+		ret |= TIOCM_CAR;
+	if (status & UART_MSR_RI)
+		ret |= TIOCM_RNG;
+	if (status & UART_MSR_DSR)
+		ret |= TIOCM_DSR;
+	if (status & UART_MSR_CTS)
+		ret |= TIOCM_CTS;
+	pr_debug("%s(): mcr %0x02X\n", __func__, ret);
+	return ret;
+}
+
 static void xtm_set_mctrl(struct uart_port *port, unsigned int mctrl)
 {
 	struct uart_8250_port *up = (struct uart_8250_port *)port;
@@ -146,13 +199,15 @@ static void xtm_set_mctrl(struct uart_port *port, unsigned int mctrl)
 
 	mcr = (mcr & up->mcr_mask) | up->mcr_force | up->mcr;
 
+	pr_debug("%s(): mcr 0x%02X\n", __func__, mcr);
 	serial_outp(up, UART_MCR, mcr);
 }
 
-static int xtm_serial_start_port(struct xtm_serial_port *xsp)
+static int xtm_serial_startup(struct uart_port *port)
 {
-	struct uart_8250_port *up = &xsp->up;
+	struct uart_8250_port *up = (struct uart_8250_port *)port;
 	unsigned char lsr, iinfo;
+	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
 
 	up->port.fifosize = uart_config[up->port.type].fifo_size;
 	up->tx_loadsz = uart_config[up->port.type].tx_loadsz;
@@ -199,9 +254,10 @@ static int xtm_serial_start_port(struct xtm_serial_port *xsp)
 	return 0;
 }
 
-static void xtm_serial_shutdown(struct xtm_serial_port *xsp)
+static void xtm_serial_shutdown(struct uart_port *port)
 {
-	struct uart_8250_port *up = &xsp->up;
+	struct uart_8250_port *up = (struct uart_8250_port *)port;
+	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
 
 	up->ier = 0;
 	serial_outp(up, UART_IER, 0);
@@ -229,6 +285,11 @@ static int xtm_serial_open(struct tty_struct *tty, struct file *filp)
 	xsp->up.port.type    = PORT_16550A;
 	xsp->up.capabilities = UART_CAP_FIFO;
 
+	xsp->up.port.get_mctrl = xtm_get_mctrl;
+	xsp->up.port.set_mctrl = xtm_set_mctrl;
+	xsp->up.port.startup = xtm_serial_startup;
+	xsp->up.port.shutdown = xtm_serial_shutdown;
+
 	pr_debug("%s(): line %d\n", __func__, line);
 
 	ret = tty_port_open(&xsp->tty_port, tty, filp);
@@ -237,11 +298,13 @@ static int xtm_serial_open(struct tty_struct *tty, struct file *filp)
 
 	mutex_init(&xsp->port_mutex);
 
-	ret = xtm_serial_start_port(xsp);
-	if (ret)
-		return ret;
-
 	xsd->opened_ports |= (1 << line);
+	ret = xtm_serial_startup((struct uart_port *) &xsp->up);
+	if (ret) {
+		xsd->opened_ports &= ~(1 << line);
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -254,7 +317,7 @@ static void xtm_serial_close(struct tty_struct *tty, struct file *filp)
 	dev_dbg(tty->dev, "%s(): %d\n", __func__, __LINE__);
 
 	xsd->opened_ports &= ~(1 << line);
-	xtm_serial_shutdown(xsp);
+	xtm_serial_shutdown((struct uart_port *) &xsp->up);
 
 	tty_port_close(tty->port, tty, filp);
 	mutex_destroy(&xsp->port_mutex);
@@ -274,7 +337,7 @@ static int xtm_serial_write(struct tty_struct *tty, const unsigned char *buf,
 	struct xtm_serial_port *xsp = &xsd->xtm_ports[line];
 	struct uart_8250_port *up = (struct uart_8250_port *) &xsp->up;
 	int ret;
-	unsigned char *p = buf;
+	unsigned const char *p = buf;
 
 	dev_dbg(tty->dev, "%s(): %d line %d count %d\n", __func__, __LINE__,
 		line, count);
@@ -442,6 +505,286 @@ static void xtm_set_termios(struct tty_struct *tty, struct ktermios *old_termios
 	mutex_unlock(&xsd->io_mutex);
 }
 
+static int xtm_serial_get_lsr_info(struct uart_8250_port *up, unsigned int *pval)
+{
+	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
+	unsigned int	lsr;
+	unsigned int	result;
+
+	mutex_lock(&xsp->port_mutex);
+	lsr = serial_inp(up, UART_LSR);
+	up->lsr_saved_flags |= lsr & LSR_SAVE_FLAGS;
+	mutex_unlock(&xsp->port_mutex);
+
+	result = ((lsr & UART_LSR_TEMT) ? TIOCSER_TEMT : 0);
+	return put_user(result,pval);
+}
+
+static int xtm_serial_get_modem_info(struct uart_8250_port *up, unsigned int *pval)
+{
+	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
+	unsigned char	mcr = up->mcr;
+	unsigned char	msr = 0;
+	unsigned int	result;
+
+	mutex_lock(&xsp->port_mutex);
+	msr = check_modem_status(up);
+	mutex_unlock(&xsp->port_mutex);
+
+	result = \
+		  ((mcr & UART_MCR_RTS)	 ? TIOCM_RTS	: 0)
+		| ((mcr & UART_MCR_DTR)	 ? TIOCM_DTR	: 0)
+		| ((mcr & UART_MCR_OUT1) ? TIOCM_OUT1	: 0)
+		| ((mcr & UART_MCR_OUT2) ? TIOCM_OUT2	: 0)
+		| ((msr & UART_MSR_DCD)	 ? TIOCM_CAR	: 0)
+		| ((msr & UART_MSR_RI)	 ? TIOCM_RNG	: 0)
+		| ((msr & UART_MSR_DSR)	 ? TIOCM_DSR	: 0)
+		| ((msr & UART_MSR_CTS)	 ? TIOCM_CTS	: 0);
+
+	return put_user(result, pval);
+}
+
+static int xtm_serial_set_modem_info(struct uart_8250_port *up, unsigned cmd, unsigned *pval)
+{
+	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
+	unsigned int	arg;
+	unsigned int	old_mcr;
+
+	int error = get_user(arg, pval);
+	if (error)
+		return error;
+
+	/* Get current modem control settings */
+	up->mcr = up->port.ops->get_mctrl(&up->port);
+	old_mcr = up->mcr;
+
+	switch (cmd) {
+	case MODBUS_TXENB:
+		pr_debug("%s: Enable RTU tx reg %d from %d\n", __func__, UART_SCR, arg);
+		mutex_lock(&xsp->port_mutex);
+		serial_outp(up, UART_SCR, ( arg ? 1:0 ));
+		mutex_unlock(&xsp->port_mutex);
+		return 0;
+
+	case TIOCMBIS:
+		if (arg & TIOCM_RTS)
+			up->mcr |= UART_MCR_RTS;
+		if (arg & TIOCM_DTR)
+			up->mcr |= UART_MCR_DTR;
+		if (arg & TIOCM_OUT1)
+			up->mcr |= UART_MCR_OUT1;
+		if (arg & TIOCM_OUT2)
+			up->mcr |= UART_MCR_OUT2;
+		break;
+
+	case TIOCMBIC:
+		if (arg & TIOCM_RTS)
+			up->mcr &= ~UART_MCR_RTS;
+		if (arg & TIOCM_DTR)
+			up->mcr &= ~UART_MCR_DTR;
+		if (arg & TIOCM_OUT1)
+			up->mcr &= ~UART_MCR_OUT1;
+		if (arg & TIOCM_OUT2)
+			up->mcr &= ~UART_MCR_OUT2;
+		break;
+
+	case TIOCMSET:
+		up->mcr = ((up->mcr & ~(UART_MCR_RTS  |
+					    		UART_MCR_OUT1 |
+					    		UART_MCR_OUT2 |
+					    		UART_MCR_DTR))
+			     | ((arg & TIOCM_RTS)  ? UART_MCR_RTS	: 0)
+			     | ((arg & TIOCM_OUT1) ? UART_MCR_OUT1	: 0)
+			     | ((arg & TIOCM_OUT2) ? UART_MCR_OUT2	: 0)
+			     | ((arg & TIOCM_DTR)  ? UART_MCR_DTR	: 0));
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	mutex_lock(&xsp->port_mutex);
+	if (old_mcr != up->mcr) {
+		up->port.ops->set_mctrl(&(up->port), up->mcr);
+	}
+	mutex_unlock(&xsp->port_mutex);
+
+	return 0;
+}
+
+static int check_port_status_change(unsigned long arg,
+	struct xtm_serial_port *xsp, struct uart_icount *cprev, struct uart_icount *cnow)
+{
+			mutex_lock(&xsp->port_mutex);
+			*cnow = xsp->up.port.icount; /* atomic copy */
+			mutex_unlock(&xsp->port_mutex);
+
+			if (cnow->rng == cprev->rng && cnow->dsr == cprev->dsr &&
+			    cnow->dcd == cprev->dcd && cnow->cts == cprev->cts)
+				return -EIO;
+
+			if ( ((arg & TIOCM_RNG) && (cnow->rng != cprev->rng)) ||
+			     ((arg & TIOCM_DSR) && (cnow->dsr != cprev->dsr)) ||
+			     ((arg & TIOCM_CD)  && (cnow->dcd != cprev->dcd)) ||
+			     ((arg & TIOCM_CTS) && (cnow->cts != cprev->cts))) {
+				return 0;
+			}
+
+			return -EINVAL;	// FIXME
+}
+
+static int xtm_serial_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
+{
+	int error;
+	unsigned int line = tty->index;
+	struct xtm_serial_device *xsd = tty->driver->driver_state;
+	struct xtm_serial_port *xsp = &xsd->xtm_ports[line];
+	struct uart_8250_port *up = (struct uart_8250_port *) &xsp->up;
+	struct tty_port *ttyp = &xsp->tty_port;
+	struct device *dev = ttyp->tty->dev;
+	struct uart_icount cprev, cnow;			/* icounts - KS	*/
+	struct serial_icounter_struct *p_cuser;		/* icounts - US	*/
+	unsigned long value = 0;
+
+	dev_dbg(dev, "%s(): cmd 0x%08X, arg 0x%08lX\n", __func__, cmd, arg);
+
+	if ((cmd != TIOCGSERIAL)	&& (cmd != TIOCSSERIAL)		&&
+	    (cmd != MODBUS_RTU_GET) 	&& (cmd != MODBUS_RTU_SET)	&&
+	    (cmd != TIOCSERCONFIG)	&& (cmd != TIOCSERGSTRUCT)	&&
+	    (cmd != TIOCMIWAIT)		&& (cmd != TIOCGICOUNT))
+	{	if (tty_io_error(tty))
+		    return -EIO;
+	}
+
+	switch (cmd) {		/* "asm/ioctls.h" */
+	case MODBUS_RTU_GET:
+		dev_dbg(dev, "%s(): MODBUS_RTU_GET\n", __func__);
+		return put_user((tty->flags & MODBUS_RTU_FLAG) ? 1:0,
+						(unsigned long*) arg);
+
+	case MODBUS_RTU_SET:
+		dev_dbg(dev, "%s(): MODBUS_RTU_SET\n", __func__);
+		error = get_user(value, (unsigned long*)arg);
+		if (error)
+			return error;
+
+		/* Only 16550A to be used*/
+		if (up->port.type != PORT_16550A) {
+			return -EPERM;
+		}
+
+		/* Note: Not to confuse
+		 * - We touch "uart_port info flag" but
+		 * - We DON'T touch "uart_port flag"
+		 * ***************************************/
+		tty->flags = ((tty->flags & ~MODBUS_RTU_FLAG) |
+			(value ? MODBUS_RTU_FLAG : 0));
+		return 0;
+
+	case TIOCMGET:
+		dev_dbg(dev, "%s(): TIOCMGET\n", __func__);
+		return xtm_serial_get_modem_info(up, (unsigned int*) arg);
+
+	case TIOCMBIS		:
+	case TIOCMBIC		:
+	case TIOCMSET		:
+	case MODBUS_TXENB	:
+		dev_dbg(dev, "%s(): TIOCMBIS/TIOCMBIC/TIOCMSET/MODBUS_TXENB\n", __func__);
+		return xtm_serial_set_modem_info(up, cmd, (unsigned int*) arg);
+
+	case TIOCSERGETLSR: /* Get line status register */
+		dev_dbg(dev, "%s(): TIOCSERGETLSR\n", __func__);
+		return xtm_serial_get_lsr_info(up, (unsigned int*) arg);
+
+	/* NB
+	 * Wait for any of the 4 modem inputs (DCD,RI,DSR,CTS) to change
+	 * - mask passed in arg for lines of interest
+	 *   (use |'ed TIOCM_RNG/DSR/CD/CTS for masking)
+	 * Caller should use TIOCGICOUNT to see which one it was
+	 * ****************************************************** */
+	case TIOCMIWAIT:
+		dev_dbg(dev, "%s(): TIOCMIWAIT\n", __func__);
+		mutex_lock(&xsp->port_mutex);
+		/* note the counters on entry */
+		cprev = up->port.icount;
+		mutex_unlock(&xsp->port_mutex);
+		while (1) {
+			/* interruptible_sleep_on(&(tty->port->delta_msr_wait)); */
+			wait_event_interruptible((tty->port->delta_msr_wait),
+				check_port_status_change(arg, xsp, &cprev, &cnow));
+			/* see if a signal did it */
+			if (signal_pending(current))
+				return -ERESTARTSYS;
+			cprev = cnow;
+		}
+
+	/* Get counter of input serial line interrupts (DCD,RI,DSR,CTS)
+	 * Return: write counters to the user passed counter struct
+	 * NB: both 1->0 and 0->1 transitions are counted except for
+	 *     RI where only 0->1 is counted.
+	 * ****************************************************** */
+	case TIOCGICOUNT:
+		dev_dbg(dev, "%s(): TIOCGICOUNT\n", __func__);
+		mutex_lock(&xsp->port_mutex);
+		cnow = up->port.icount;
+		mutex_unlock(&xsp->port_mutex);
+		p_cuser = (struct serial_icounter_struct *) arg;
+
+		error = put_user(cnow.cts, &p_cuser->cts);
+		if (error)
+			return error;
+
+		error = put_user(cnow.dsr, &p_cuser->dsr);
+		if (error)
+			return error;
+
+		error = put_user(cnow.rng, &p_cuser->rng);
+		if (error)
+			return error;
+
+		error = put_user(cnow.dcd, &p_cuser->dcd);
+		if (error)
+			return error;
+
+		error = put_user(cnow.rx, &p_cuser->rx);
+		if (error)
+			return error;
+
+		error = put_user(cnow.tx, &p_cuser->tx);
+		if (error)
+			return error;
+
+		error = put_user(cnow.frame, &p_cuser->frame);
+		if (error)
+			return error;
+
+		error = put_user(cnow.overrun, &p_cuser->overrun);
+		if (error)
+			return error;
+
+		error = put_user(cnow.parity, &p_cuser->parity);
+		if (error)
+			return error;
+
+		error = put_user(cnow.brk, &p_cuser->brk);
+		if (error)
+			return error;
+
+		error = put_user(cnow.buf_overrun, &p_cuser->buf_overrun);
+		if (error)
+			return error;
+
+		return 0;
+
+	default:
+		pr_debug("%s: unknown cmd 0x%08X\n", __func__, cmd);
+		return -ENOIOCTLCMD;
+
+	}
+
+	return 0;
+}
+
 static const struct tty_operations xtm_serial_ops = {
 	.open = xtm_serial_open,
 	.close = xtm_serial_close,
@@ -449,6 +792,7 @@ static const struct tty_operations xtm_serial_ops = {
 	.write = xtm_serial_write,
 	.write_room = xtm_serial_write_room,
 	.set_termios = xtm_set_termios,
+	.ioctl = xtm_serial_ioctl,
 };
 
 static void receive_chars(struct uart_8250_port *up, int *status)
@@ -527,33 +871,6 @@ static void transmit_chars(struct uart_8250_port *up)
 	dev_info(dev, "%s():\n", __func__);
 }
 
-static unsigned int check_modem_status(struct uart_8250_port *up)
-{
-	struct xtm_serial_port *xsp = container_of(up, struct xtm_serial_port, up);
-	struct tty_port *ttyp = &xsp->tty_port;
-	struct device *dev = ttyp->tty->dev;
-	unsigned int status = serial_inp(up, UART_MSR);
-
-	status |= up->msr_saved_flags;
-	up->msr_saved_flags = 0;
-
-	if (status & UART_MSR_ANY_DELTA && up->ier & UART_IER_MSI &&
-	    up->port.state != NULL) {
-		if (status & UART_MSR_TERI)
-			up->port.icount.rng++;
-		if (status & UART_MSR_DDSR)
-			up->port.icount.dsr++;
-		if (status & UART_MSR_DDCD) {
-			dev_info(dev, "%s(): UART_MSR_DDCD\n", __func__);
-			uart_handle_dcd_change(&up->port, status & UART_MSR_DCD);
-		}
-		if (status & UART_MSR_DCTS) {
-			dev_info(dev, "%s(): UART_MSR_DCTS\n", __func__);
-			uart_handle_cts_change(&up->port, status & UART_MSR_CTS);
-		}
-	}
-	return status;
-}
 
 static void xtm_irq_port(struct xtm_serial_device *xtd, int idx)
 {
